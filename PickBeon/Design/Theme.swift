@@ -4,9 +4,9 @@ import AppKit
 // PLATFORM: macos — custom 디자인 토큰 단일 소스 (docs/DESIGN.md와 1:1)
 enum Theme {
     // MARK: 색 (dynamic: 다크 = 콘셉트 v2, 라이트 = 저채도 그레이)
-    static let accent       = Color(light: 0x5B5BF0, dark: 0x7C7CF4)
-    static let hero1        = Color(light: 0x5B5BF0, dark: 0x5B5BF0)
-    static let hero2        = Color(light: 0x8B5CF6, dark: 0x8B5CF6)
+    static let accent       = Color(light: 0x2563EB, dark: 0x60A5FA)
+    static let hero1        = Color(light: 0x2563EB, dark: 0x2563EB)
+    static let hero2        = Color(light: 0x3B82F6, dark: 0x60A5FA)
     static let hero         = LinearGradient(colors: [hero1, hero2], startPoint: .leading, endPoint: .trailing)
 
     static let bg           = Color(light: 0xF2F2F7, dark: 0x141416)
@@ -18,21 +18,24 @@ enum Theme {
     static let textPrimary   = Color(light: 0x1C1C1E, dark: 0xF5F5F7)
     static let textSecondary = Color(light: 0x6E6E73, dark: 0x9A9AA2)
     static let line          = Color(light: 0x000000, dark: 0xFFFFFF).opacity(0.08)
+    static let glassStroke  = Color(light: 0x000000, dark: 0xFFFFFF).opacity(0.12)
 
     static let ok       = Color(light: 0x1FAD32, dark: 0x30D158)
     static let danger   = Color(light: 0xD70015, dark: 0xFF453A)
     static let warn     = Color(light: 0xC93400, dark: 0xFF9F0A)
     static let pinColor = Color(light: 0xC93400, dark: 0xFF9F0A)
 
-    static let transPanel     = Color(light: 0xEEEEF8, dark: 0x1A1C26)
+    static let transPanel     = Color(light: 0xEEF4FF, dark: 0x162033)
     static let transPanelLine = accent.opacity(0.35)
     static let heroKbd        = Color.black.opacity(0.25)
+    static let kbdFill        = Color.primary.opacity(0.10)
 
     // MARK: 라운드
     static let rChip: CGFloat = 7
     static let rCard: CGFloat = 12
     static let rPanel: CGFloat = 16
     static let rBlock: CGFloat = 10
+    static let rTab: CGFloat = 8
 
     // MARK: 간격
     static let s1: CGFloat = 4

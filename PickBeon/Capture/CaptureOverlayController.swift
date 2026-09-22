@@ -3,8 +3,8 @@ import SwiftUI
 import ScreenCaptureKit
 
 // AppKit 오버레이: 마우스 트래킹 + 직접 그리기.
-// 스텝: [1]딤+힌트 → [2]mouseDown → [3]드래그(치수+loupe) → [4]mouseUp 고정+툴바 → [5]액션에서만 캡쳐.
-// v0.4: loupe(전체화면 1회 캡쳐), Option+드래그 즉시 번역, 프리즈 후 코너 핸들 리사이즈.
+// 스텝: [1]딤+힌트 → [2]mouseDown → [3]드래그(치수) → [4]mouseUp 고정+툴바 → [5]액션에서만 캡쳐.
+// Same area: 이전 영역 프리즈 복원 → 핸들 조정 → 툴바 실행.
 
 enum CaptureAction {
     case copy, save, pin, ocr, translate
@@ -28,9 +28,15 @@ final class CaptureOverlayController {
     private var overlay: OverlayView!
     private var toolbar: NSPanel!
     private var hintbar: NSPanel!
-    private let hintSize = NSSize(width: 460, height: 40)
-    private let toolbarSize = NSSize(width: 330, height: 42)
+    private let hintSize = NSSize(width: 520, height: 40)
+    private var toolbarSize = NSSize(width: 420, height: 42)
     private var pendingTranslate = false
+    /// Same area 복원용: top-left 좌표 (show() 완료 후 적용)
+    var pendingRestore: CGRect?
+    /// Same area 정보 (툴바 pill)
+    var hasLastArea = false
+    var lastAreaLabel = ""
+    private var toolbarHost: NSHostingController<CaptureToolbarView>?
 
     init(screen: NSScreen, display: SCDisplay) {
         self.screen = screen
@@ -48,7 +54,14 @@ final class CaptureOverlayController {
         window.acceptsMouseMovedEvents = true
 
         overlay = OverlayView(frame: NSRect(origin: .zero, size: screen.frame.size))
-        overlay.onChange = { [weak self] _ in self?.layoutPanels() }
+        overlay.onChange = { [weak self] sel in
+            // 새 선택 시작(sel=nil) 시 이전 프리즈 이미지 폐기 — 재드래그 늘림 방지
+            if sel == nil {
+                self?.frozenImage = nil
+                self?.pendingTranslate = false
+            }
+            self?.layoutPanels()
+        }
         overlay.onFreezeRequest = { [weak self] rect, option in self?.beginCapture(rect: rect, option: option) }
         overlay.onCancel = { [weak self] in self?.onCancel?() }
         overlay.onReuse = { [weak self] in
@@ -58,8 +71,9 @@ final class CaptureOverlayController {
         overlay.onResizeCommit = { [weak self] rect in self?.recropAfterResize(rect) }
         window.contentView = overlay
 
-        let tb = CaptureToolbarView(onAction: { [weak self] a in self?.perform(action: a) })
-        toolbar = NSPanel(contentViewController: NSHostingController(rootView: tb))
+        let host = NSHostingController(rootView: makeToolbarRoot())
+        toolbarHost = host
+        toolbar = NSPanel(contentViewController: host)
         toolbar.styleMask = [.borderless, .nonactivatingPanel]
         toolbar.isOpaque = false
         toolbar.backgroundColor = .clear
@@ -82,13 +96,35 @@ final class CaptureOverlayController {
     }
 
     func show() {
-        // loupe용 전체화면 1회 캡쳐 → 완료 후 오버레이 표시 (자체 윈도우 미포함)
+        // loupe/복원용 전체화면 1회 캡쳐 → 완료 후 오버레이 표시
         Task { @MainActor in
             let shot = await Self.grabFull(display: display, screen: screen)
             self.overlay.fullShot = shot
             self.window.makeKeyAndOrderFront(nil)
-            self.centerHint()
-            self.hintbar.orderFrontRegardless()
+            if let restore = self.pendingRestore {
+                self.pendingRestore = nil
+                self.restoreSelection(restore)
+            } else {
+                self.centerHint()
+                self.hintbar.orderFrontRegardless()
+            }
+        }
+    }
+
+    /// 이전 영역(top-left)을 프리즈 상태로 복원 — 확인/핸들 조정 후 툴바로 실행
+    func restoreSelection(_ tl: CGRect) {
+        guard tl.width > 10, tl.height > 10 else { return }
+        let bl = CGRect(x: tl.minX,
+                        y: overlay.bounds.height - tl.maxY,
+                        width: tl.width, height: tl.height)
+        overlay.modeIdle()
+        overlay.sel = bl
+        overlay.needsDisplay = true
+        hintbar.orderOut(nil)
+        if let img = overlay.cropFromShot(bl) {
+            freeze(img)
+        } else {
+            beginCapture(rect: bl, option: false)
         }
     }
 
@@ -147,6 +183,7 @@ final class CaptureOverlayController {
         overlay.capturing = false
         overlay.frozenImage = image
         overlay.needsDisplay = true
+        if hasLastArea { refreshToolbar() }
         layoutPanels()
         if pendingTranslate {
             pendingTranslate = false
@@ -162,6 +199,19 @@ final class CaptureOverlayController {
         } else {
             beginCapture(rect: rect, option: false)
         }
+    }
+
+    private func makeToolbarRoot() -> CaptureToolbarView {
+        CaptureToolbarView(
+            onAction: { [weak self] a in self?.perform(action: a) },
+            showSameArea: hasLastArea,
+            sameAreaSize: lastAreaLabel,
+            onSameArea: { [weak self] in self?.onReuse?() }
+        )
+    }
+
+    private func refreshToolbar() {
+        toolbarHost?.rootView = makeToolbarRoot()
     }
 
     private func perform(action: CaptureAction) {
@@ -197,7 +247,7 @@ final class OverlayView: NSView {
     var onReuse: (() -> Void)?
     var onPrimary: (() -> Void)?
     var onResizeCommit: ((CGRect) -> Void)?
-    private(set) var sel: CGRect?
+    var sel: CGRect?
     var capturing = false
     var frozenImage: NSImage?
     var fullShot: CGImage? { didSet { needsDisplay = true } }
@@ -208,6 +258,12 @@ final class OverlayView: NSView {
     private let handleHit: CGFloat = 12
 
     private enum DragMode { case none, select, resizeTL, resizeTR, resizeBL, resizeBR }
+
+    func modeIdle() {
+        mode = .none
+        resizeAnchor = nil
+        anchor = nil
+    }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .crosshair)
@@ -225,6 +281,8 @@ final class OverlayView: NSView {
         mode = .select
         anchor = p
         sel = nil
+        // 이전 캡쳐 이미지를 새 영역에 늘려 그리지 않도록 제거
+        frozenImage = nil
         needsDisplay = true
         onChange?(nil)
     }
@@ -267,7 +325,15 @@ final class OverlayView: NSView {
 
     override func mouseMoved(with e: NSEvent) {
         cursor = convert(e.locationInWindow, from: nil)
-        if sel != nil && fullShot != nil { needsDisplay = true }
+        // 준비/드래그/리사이즈 중 크로스헤어 갱신
+        if shouldDrawCrosshair { needsDisplay = true }
+    }
+
+    /// 준비 상태·드래그·핸들 조정 중 — 프리즈 유휴(툴바 뜬 상태)에서는 끔
+    private var shouldDrawCrosshair: Bool {
+        guard cursor != nil, !capturing else { return false }
+        if frozenImage != nil && mode == .none { return false }
+        return true
     }
 
     override func keyDown(with e: NSEvent) {
@@ -316,13 +382,15 @@ final class OverlayView: NSView {
         let dim = NSColor.black.withAlphaComponent(0.48)
         guard let r = sel, r.width > 4, r.height > 4 else {
             dim.setFill(); bounds.fill()
+            drawCrosshair()
             return
         }
         let path = NSBezierPath(rect: bounds)
         path.append(NSBezierPath(rect: r))
         path.windingRule = .evenOdd
         dim.setFill(); path.fill()
-        if let img = frozenImage {
+        // 유휴(프리즈 완료) 때만 이미지 표시. 핸들/재드래그 중에는 라이브 화면(투명 구멍) 유지
+        if let img = frozenImage, mode == .none {
             img.draw(in: r)
         }
         NSColor.white.setStroke()
@@ -337,12 +405,58 @@ final class OverlayView: NSView {
             pill(String(localized: "캡쳐 중…"), at: r)
             return
         }
+        drawCrosshair()
         if frozenImage == nil {
             pill("\(Int(r.width)) x \(Int(r.height)) px", at: r)
         } else {
             // 프리즈 후: 치수 pill 상단 표시
             pillAtTop("\(Int(r.width)) x \(Int(r.height)) px", at: r)
         }
+    }
+
+    /// 커서를 가로지르는 십자 가이드 + 좌표 (시작점/치수 측정용)
+    private func drawCrosshair() {
+        guard shouldDrawCrosshair, let c = cursor else { return }
+        // 세로/가로 전체선 — 다크 UI 위에서도 보이도록 이중 스트로크
+        for (color, w) in [(NSColor.black.withAlphaComponent(0.55), CGFloat(1.5)),
+                           (NSColor.white.withAlphaComponent(0.9), CGFloat(1.0))] {
+            color.setStroke()
+            let v = NSBezierPath()
+            v.move(to: NSPoint(x: c.x, y: bounds.minY))
+            v.line(to: NSPoint(x: c.x, y: bounds.maxY))
+            v.lineWidth = w
+            v.stroke()
+            let h = NSBezierPath()
+            h.move(to: NSPoint(x: bounds.minX, y: c.y))
+            h.line(to: NSPoint(x: bounds.maxX, y: c.y))
+            h.lineWidth = w
+            h.stroke()
+        }
+        // 교점 마커
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: CGRect(x: c.x - 3, y: c.y - 3, width: 6, height: 6)).fill()
+        // 좌표 (좌상단 원점 기준 — 스크린샷 툴 관례)
+        let yTop = Int(bounds.height - c.y)
+        drawCoord("\(Int(c.x)), \(yTop)", near: c)
+    }
+
+    private func drawCoord(_ text: String, near c: CGPoint) {
+        let label = text as NSString
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white,
+            .backgroundColor: NSColor.black.withAlphaComponent(0.75)]
+        let s = label.size(withAttributes: attrs)
+        var x = c.x + 14
+        var y = c.y + 14
+        if x + s.width + 6 > bounds.maxX { x = c.x - 14 - s.width }
+        if y + s.height + 6 > bounds.maxY { y = c.y - 14 - s.height }
+        x = max(bounds.minX + 4, x)
+        y = max(bounds.minY + 4, y)
+        let bg = CGRect(x: x - 4, y: y - 2, width: s.width + 8, height: s.height + 4)
+        NSColor.black.withAlphaComponent(0.75).setFill()
+        NSBezierPath(roundedRect: bg, xRadius: 4, yRadius: 4).fill()
+        label.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
     }
 
     private func pill(_ text: String, at r: CGRect) {
@@ -368,9 +482,11 @@ struct HintBarView: View {
         HStack(spacing: 8) {
             Text(String(localized: "드래그하여 선택")).font(Theme.font(12, weight: .semibold))
             Divider().frame(height: 16)
-            Kbd("⌥"); Text(String(localized: "번역")).font(Theme.font(12)).foregroundColor(.secondary)
+            Kbd("⏎"); Text(String(localized: "번역")).font(Theme.font(12)).foregroundColor(.secondary)
             Divider().frame(height: 16)
-            Kbd("R"); Text(String(localized: "마지막")).font(Theme.font(12)).foregroundColor(.secondary)
+            Kbd("⌥"); Text(String(localized: "즉시 번역")).font(Theme.font(12)).foregroundColor(.secondary)
+            Divider().frame(height: 16)
+            Kbd("R"); Text(String(localized: "이전 영역")).font(Theme.font(12)).foregroundColor(.secondary)
             Divider().frame(height: 16)
             Kbd("Esc"); Text(String(localized: "취소")).font(Theme.font(12)).foregroundColor(.secondary)
         }
@@ -390,22 +506,55 @@ struct HintBarView: View {
 
 struct CaptureToolbarView: View {
     var onAction: (CaptureAction) -> Void
+    var showSameArea: Bool = false
+    var sameAreaSize: String = ""
+    var onSameArea: (() -> Void)? = nil
     @State private var hover: CaptureAction?
+    @State private var hoverSame = false
 
     var body: some View {
         HStack(spacing: 2) {
+            TB(String(localized: "번역"), "character.bubble", .translate, primary: true)
+            Rectangle().fill(Color.white.opacity(0.14)).frame(width: 1, height: 20)
             TB(String(localized: "복사"), "doc.on.doc", .copy)
             TB(String(localized: "저장"), "square.and.arrow.down", .save)
             TB(String(localized: "핀"), "pin", .pin)
             Rectangle().fill(Color.white.opacity(0.14)).frame(width: 1, height: 20)
             TB("OCR", "text.viewfinder", .ocr)
-            TB(String(localized: "번역"), "character.bubble", .translate, primary: true)
+            if showSameArea {
+                sameAreaTB
+            }
         }
         .padding(5)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
         .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.white.opacity(0.14)))
         .shadow(radius: 12)
     }
+
+    private var sameAreaTB: some View {
+        Button { onSameArea?() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "rectangle.dashed").font(.system(size: 11, weight: .semibold))
+                Text(sameAreaSize.isEmpty
+                     ? String(localized: "Same area")
+                     : String(localized: "Same area") + " " + sameAreaSize)
+                    .font(Theme.font(12, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 9).padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(hoverSame ? Color.white.opacity(0.16) : Color.white.opacity(0.08))
+            )
+            .foregroundStyle(Theme.textPrimary)
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .onHover { hoverSame = $0 }
+        .animation(Theme.hoverFade, value: hoverSame)
+        .help(String(localized: "이전 영역 복원"))
+    }
+
     private func TB(_ t: String, _ icon: String, _ a: CaptureAction, primary: Bool = false) -> some View {
         Button { onAction(a) } label: {
             HStack(spacing: 4) {

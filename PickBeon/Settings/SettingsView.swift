@@ -3,6 +3,7 @@ import SwiftUI
 // GifJot식 사이드바 설정 (custom 토큰). 자동 저장. 검색 필터 동작.
 struct SettingsView: View {
     @ObservedObject var s = AppSettings.shared
+    @ObservedObject private var uc = UpdateCenter.shared
     @State private var sel = 0
     @State private var search = ""
 
@@ -12,6 +13,7 @@ struct SettingsView: View {
         (2, "keyboard", "단축키"),
         (3, "clock", "기록"),
         (4, "paintbrush", "외관"),
+        (5, "arrow.down.circle", "업데이트"),
     ]
 
     private var visibleNavs: [(Int, String, String)] {
@@ -160,6 +162,65 @@ struct SettingsView: View {
                         .disabled(true)
                         .opacity(0.4)
                 }
+            } else if sel == 5 {
+                SHead(String(localized: "업데이트"), String(localized: "GitHub Releases에서 새 버전을 확인합니다."))
+                SCard(String(localized: "현재 버전"), "PickBeon \(ReleaseChecker.currentVersion)") {
+                    Text(ReleaseChecker.currentVersion)
+                        .font(Theme.font(12, weight: .semibold, mono: true))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                SCard(String(localized: "업데이트 확인 주기"), String(localized: "실행 시·팝오버 열 때 주기에 맞춰 자동 확인")) {
+                    Picker("", selection: Binding(
+                        get: { uc.frequencyRaw },
+                        set: { uc.frequencyRaw = $0 }
+                    )) {
+                        ForEach(UpdateCheckFrequency.allCases) { f in
+                            Text(f.label).tag(f.rawValue)
+                        }
+                    }
+                    .labelsHidden().frame(width: 110).tint(Theme.accent)
+                }
+                SCard(String(localized: "마지막 확인"), "") {
+                    if let d = uc.lastCheckedAt {
+                        Text(d, style: .relative)
+                            .font(Theme.font(12))
+                            .foregroundStyle(Theme.textSecondary)
+                    } else {
+                        Text(String(localized: "아직 없음"))
+                            .font(Theme.font(12))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await uc.checkForUpdate() }
+                    } label: {
+                        if case .checking = uc.state {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label(String(localized: "지금 확인"), systemImage: "arrow.clockwise")
+                        }
+                    }
+                    .disabled({ if case .checking = uc.state { return true }; return false }())
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+
+                    updateStatusLabel
+                    Spacer()
+                }
+                .padding(.bottom, 4)
+
+                if case let .updateAvailable(tag, htmlURL, notes) = uc.state {
+                    Button(String(localized: "업데이트 시트 열기")) {
+                        _ = tag; _ = htmlURL; _ = notes
+                        AppCoordinator.shared.showUpdateSheet()
+                    }
+                    .font(Theme.font(12, weight: .semibold))
+                }
+                Text(String(localized: "인앱 자동 설치 없음 — 릴리스 페이지에서 내려받아 교체합니다."))
+                    .font(Theme.font(11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.top, 4)
             } else {
                 SHead(String(localized: "외관"), String(localized: "카드와 오버레이 표시."))
                 SCard(String(localized: "번역 박스 기본 표시"), String(localized: "에디터 OCR 박스")) {
@@ -186,6 +247,34 @@ struct SettingsView: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.bg)
+    }
+
+    private var updateStatusLabel: some View {
+        Group {
+            switch uc.state {
+            case .idle:
+                Text(String(localized: "대기 중"))
+                    .font(Theme.font(12)).foregroundStyle(Theme.textSecondary)
+            case .checking:
+                Text(String(localized: "확인 중…"))
+                    .font(Theme.font(12)).foregroundStyle(Theme.textSecondary)
+            case .upToDate:
+                Label(String(localized: "최신 버전입니다"), systemImage: "checkmark.circle")
+                    .font(Theme.font(12)).foregroundStyle(Theme.ok)
+            case let .updateAvailable(tag, _, _):
+                Button {
+                    AppCoordinator.shared.showUpdateSheet()
+                } label: {
+                    Text(String(format: String(localized: "%@ 사용 가능"), tag))
+                        .font(Theme.font(12, weight: .semibold))
+                        .foregroundStyle(Theme.warn)
+                }
+                .buttonStyle(.plain)
+            case let .unavailable(msg):
+                Text(msg)
+                    .font(Theme.font(12)).foregroundStyle(Theme.textSecondary)
+            }
+        }
     }
 
     private func Nav(_ i: Int, _ icon: String, _ t: String) -> some View {

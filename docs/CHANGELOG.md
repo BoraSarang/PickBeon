@@ -1,4 +1,21 @@
 # CHANGELOG
+## v0.5.1-macos UI/UX 재정리 + Blue 팔레트 (2026-09-22)
+- [macos] P5 메뉴 팝오버 A안: 기록 탭 제거(전체검색 전담), [Pick|설정] 2탭, 340×240 + contentSize 360×260, ScrollView overflow 차단, 최신 번역 1줄+복사/에디터
+- [macos] P6 전체검색: 행 탭=미리보기 pin(두 번째 탭=붙여넣기), Esc pin 해제, 힌트 갱신
+- [macos] P7 Blue 팔레트: accent #2563EB/#60A5FA, hero blue 그라데이션, transPanel blue tint, FooterButton hover → rowHover(라이트모드 대비)
+- [macos] 빌드: ERROR 0 (P5~P7). 육안 검증·후속 UI 개선은 사용자 써보기 이후
+## v0.5.0-macos GifJot 차별화 리디자인 P1~P4 (2026-09-22)
+- [macos] P1 메뉴 팝오버 → Pick Hub: 히어로 제거, [Pick|기록|설정] 탭, accent primary 영역 Pick, 최신 번역 스티커, 글래스 ultraThinMaterial + glassStroke, 업데이트 푸터
+- [macos] P2 결과카드 → 헤더 없는 번역 스티커: 좌측 accent 바 + 원문/번역 패널 + 썸네일 드래그 + 번역보기/다시/핀
+- [macos] P3 캡쳐 툴바: 번역 primary(accent) 좌측 재배치 + Same area pill(치수) + 힌트바 ⏎번역/⌥즉시/R/Esc, toolbar 420pt
+- [macos] P4 전체 검색 팔레트: 필터(전체/번역/클립보드) + 하단 ⌘1 복사·⌥↵ 붙여넣기 힌트 + 건수
+- [macos] P0 토큰: glassStroke / rTab / kbdFill 추가, docs/DESIGN.md 화면별 레이아웃 갱신
+- [macos] NSPopover open 시 material = popover 적용 (applyPopoverMaterial)
+## v0.4.1-macos 업데이트 확인 + 히스토리 호버 미리보기 (2026-09-22)
+- [macos] GitHub Releases 업데이트 확인 (가이드 채택): ReleaseChecker + UpdateCenter(주기/마지막확인 UserDefaults), 설정「업데이트」탭, 팝오버 하단 버전/주황 업데이트 배너, 전용 시트(릴리스 노트 inline 렌더 + 릴리스 페이지 열기)
+- [macos] `.github/workflows/release.yml`: v*.*.* 태그 → 빌드·ad-hoc·ZIP·Release 발행, 태그↔Info.plist 버전 검증
+- [macos] Info.plist 버전 0.1.0 → 0.4.1 (CHANGELOG 정합)
+- [macos] 히스토리 호버 미리보기: 전체 검색 팔레트 우측 고정 패널(610px), 팝오버 기록 목록 행 호버 시 우측 피크 — HistoryRecordPreview 공용
 ## v0.4.1-macos M4/M5 육안 피드백 수리 (2026-09-22)
 - [macos] 단축키 카드 미표시/팝오버 닫힘 시 소실: NSPanel hidesOnDeactivate=false (결과카드·기록·핀)
 - [macos] ⌘⌥Z 선택번역 카드 → 드래그 직후 마우스 근처 배치 (화면 클램프), 캡쳐 카드는 우상단 유지

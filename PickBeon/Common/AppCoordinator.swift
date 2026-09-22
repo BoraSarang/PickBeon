@@ -43,10 +43,38 @@ final class AppCoordinator: ObservableObject {
     private var historyWindow: NSWindow?
     private var debugWindow: NSWindow?
     var dismissMenu: (() -> Void)?
+    private var updateSheetWindow: NSWindow?
 
     func menuAction(_ work: @escaping () -> Void) {
         dismissMenu?()
         work()
+    }
+
+    // MARK: - 업데이트 시트 (설정 밖 — 전용 NSWindow)
+    func showUpdateSheet() {
+        guard let u = UpdateCenter.shared.availableUpdate else { return }
+        if updateSheetWindow != nil {
+            updateSheetWindow?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let root = UpdateAvailableSheet(
+            tag: u.tag,
+            htmlURL: u.htmlURL,
+            notes: u.notes,
+            onOpenRelease: {
+                if let url = URL(string: u.htmlURL) { NSWorkspace.shared.open(url) }
+            },
+            onClose: { [weak self] in self?.updateSheetWindow?.close() }
+        )
+        let w = NSWindow(contentViewController: NSHostingController(rootView: root))
+        w.styleMask = [.titled, .closable]
+        w.title = String(localized: "업데이트")
+        w.isReleasedWhenClosed = false
+        w.center()
+        WindowDropper.attach(to: w) { [weak self] in self?.updateSheetWindow = nil }
+        updateSheetWindow = w
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
     }
 
     func openSettingsWindow() {
@@ -92,7 +120,8 @@ final class AppCoordinator: ObservableObject {
     }
 
     // MARK: - 캡쳐 오버레이 (화면당 1 AppKit 윈도우)
-    func startCapture() {
+    /// restoreArea: 이전 영역(top-left)을 주면 열자마자 그 자리에 프리즈로 복원 (Same area)
+    func startCapture(restoreArea: CGRect? = nil) {
         guard permissions.screenRecordingOK else { showOnboarding(); return }
         closeOverlay()
         NSApp.activate(ignoringOtherApps: true)
@@ -106,6 +135,7 @@ final class AppCoordinator: ObservableObject {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 DebugLogger.shared.info(feature: "Capture", "디스플레이 \(content.displays.count)개")
                 var shown = 0
+                var pending: [(CaptureOverlayController, SCDisplay, NSScreen)] = []
                 for screen in NSScreen.screens {
                     guard let id = screen.displayID,
                           let disp = content.displays.first(where: { $0.displayID == id }) else { continue }
@@ -118,9 +148,31 @@ final class AppCoordinator: ObservableObject {
                     }
                     ctl.onCancel = { self.closeOverlay() }
                     ctl.onReuse = { self.repeatFromOverlay() }
+                    if self.lastArea != .zero {
+                        ctl.hasLastArea = true
+                        ctl.lastAreaLabel = "\(Int(self.lastArea.width))×\(Int(self.lastArea.height))"
+                    }
+                    pending.append((ctl, disp, screen))
+                    shown += 1
+                }
+                // Same area: show() 전에 복원 대상 1곳에 pendingRestore 지정
+                var restorePlaced = false
+                if let restore = restoreArea {
+                    for (ctl, disp, _) in pending {
+                        let match = (lastDisplay == nil) || (disp.displayID == lastDisplay?.displayID)
+                        if match {
+                            ctl.pendingRestore = restore
+                            restorePlaced = true
+                            break
+                        }
+                    }
+                    if !restorePlaced, let first = pending.first {
+                        first.0.pendingRestore = restore
+                    }
+                }
+                for (ctl, _, _) in pending {
                     ctl.show()
                     overlayControllers.append(ctl)
-                    shown += 1
                 }
                 DebugLogger.shared.info(feature: "Capture", "오버레이 \(shown)화면 표시")
                 if shown == 0 {
@@ -228,18 +280,30 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    /// Same area: 이전 영역을 오버레이에 복원 → 사용자가 확인/조정 후 툴바로 실행
     func repeatLastArea() {
-        // 메뉴 경로: 이력 없으면 새로 캡쳐
-        guard lastArea != .zero, let d = lastDisplay else { startCapture(); return }
-        closeOverlay()
-        Task { await captureAndRoute(area: lastArea, display: d, pointSize: lastPointSize, action: .translate) }
+        guard lastArea != .zero else { startCapture(); return }
+        // 오버레이가 이미 떠 있으면 그 자리에 복원
+        let onSame = overlayControllers.filter {
+            lastDisplay == nil || $0.display.displayID == lastDisplay?.displayID
+        }
+        if !onSame.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            onSame.forEach { $0.restoreSelection(lastArea) }
+            return
+        }
+        startCapture(restoreArea: lastArea)
     }
 
+    /// 오버레이 R: 선택 없을 때 이전 영역 복원 (재캡쳐·재시작 아님)
     func repeatFromOverlay() {
-        // 오버레이 R키: 선택 없을 때 + 이력 있을 때만. 그 외 무시 (재시작 안 함).
-        guard !overlayControllers.isEmpty, lastArea != .zero, let d = lastDisplay else { return }
-        closeOverlay()
-        Task { await captureAndRoute(area: lastArea, display: d, pointSize: lastPointSize, action: .translate) }
+        guard lastArea != .zero else { return }
+        let targets = overlayControllers.filter {
+            lastDisplay == nil || $0.display.displayID == lastDisplay?.displayID
+        }
+        (targets.isEmpty ? overlayControllers : targets).forEach {
+            $0.restoreSelection(lastArea)
+        }
     }
 
     // MARK: - 캡쳐 1회 → 액션 분기 (중복 캡쳐 금지, 분기는 applyAction 단일 경로)
@@ -387,6 +451,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     // MARK: - 결과 카드 (시그니처 330px, 3초 자동숨김·핀 유지)
+    /// nearMouse: 선택번역(마우스 근처). nil이면 lastArea 캡쳐 영역 오른쪽 → 그 외 우상단.
     func showResultCard(nearMouse: CGPoint? = nil) {
         closeResultCard()
         cardPinned = false
@@ -424,25 +489,59 @@ final class AppCoordinator: ObservableObject {
         scheduleCardHide()
     }
 
-    /// 마우스 근처(오른쪽 우선, 모자라면 왼쪽) 또는 기본 우상단 배치
+    /// 배치 우선순위: 마우스 근처 → 캡쳐 영역 오른쪽(모자라면 왼쪽) → 우상단. 항상 visibleFrame 안.
     private func placeCard(_ panel: NSPanel, w: CGFloat, h: CGFloat, nearMouse: CGPoint?) {
         let margin: CGFloat = 12
         let gap: CGFloat = 16
+        let clamp: (CGRect, inout CGFloat, inout CGFloat) -> Void = { f, x, y in
+            x = min(max(x, f.minX + margin), f.maxX - w - margin)
+            y = min(max(y, f.minY + margin), f.maxY - h - margin)
+        }
+
+        // 1) 선택번역: 마우스 근처
         if let mouse = nearMouse {
             let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
             if let f = screen?.visibleFrame {
                 var x = mouse.x + gap
                 var y = mouse.y - h / 2
                 if x + w > f.maxX - margin { x = mouse.x - w - gap }
-                y = min(max(y, f.minY + margin), f.maxY - h - margin)
-                x = min(max(x, f.minX + margin), f.maxX - w - margin)
+                clamp(f, &x, &y)
                 panel.setFrameOrigin(NSPoint(x: x, y: y))
                 return
             }
         }
+
+        // 2) 캡쳐 경로: 영역 오른쪽, 모자라면 왼쪽, 세로는 영역 중앙
+        if nearMouse == nil, let cap = lastAreaAnchor(),
+           let screen = screenForCapture() {
+            let f = screen.visibleFrame
+            var x = cap.maxX + gap
+            var y = cap.midY - h / 2
+            if x + w > f.maxX - margin { x = cap.minX - w - gap }
+            clamp(f, &x, &y)
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+            return
+        }
+
+        // 3) 기본: 우상단
         if let f = NSScreen.main?.visibleFrame {
             panel.setFrameOrigin(NSPoint(x: f.maxX - w - 24, y: f.maxY - h - 24))
         }
+    }
+
+    /// lastArea(top-left, 디스플레이 로컬) → 전역 Cocoa 좌표(하단원점) 캡쳐 rect
+    private func lastAreaAnchor() -> CGRect? {
+        guard lastArea != .zero, let sf = screenForCapture()?.frame else { return nil }
+        return CGRect(x: sf.minX + lastArea.minX,
+                      y: sf.maxY - lastArea.maxY,
+                      width: lastArea.width,
+                      height: lastArea.height)
+    }
+
+    private func screenForCapture() -> NSScreen? {
+        if let id = lastDisplay?.displayID,
+           let s = NSScreen.screens.first(where: { $0.displayID == id }) { return s }
+        return NSScreen.main
     }
 
     /// 번역·메시지만 3초 자동숨김. 에러카드는 유지(사용자 액션 필요).
@@ -546,7 +645,7 @@ final class AppCoordinator: ObservableObject {
         w.makeKeyAndOrderFront(nil)
     }
 
-    // MARK: - 히스토리 (Raycast식 커서 근처 nonactivating 패널)
+    // MARK: - 히스토리 (커맨드 팔레트: 화면 중앙 nonactivating 패널)
     func showHistory() {
         if historyWindow != nil { historyWindow?.makeKeyAndOrderFront(nil); return }
         let v = ClipboardPopupView(store: clipboard)
@@ -559,18 +658,15 @@ final class AppCoordinator: ObservableObject {
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.setContentSize(NSSize(width: 440, height: 480))
+        panel.setContentSize(NSSize(width: 610, height: 480))
         panel.isReleasedWhenClosed = false
         WindowDropper.attach(to: panel) { [weak self] in self?.historyWindow = nil }
-        // 커서 근처 배치 (화면 안으로 클램프)
+        // 커맨드 팔레트처럼 화면 중앙 (마우스/주 화면 visibleFrame 기준)
         let loc = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(loc) } ?? NSScreen.main
         if let f = screen?.visibleFrame {
-            var x = loc.x + 12
-            var y = loc.y - 480 - 12
-            if x + 440 > f.maxX { x = f.maxX - 440 - 8 }
-            if y < f.minY { y = min(loc.y + 24, f.maxY - 480 - 8) }
-            panel.setFrameOrigin(NSPoint(x: max(f.minX + 8, x), y: max(f.minY + 8, y)))
+            let w = panel.frame.width, h = panel.frame.height
+            panel.setFrameOrigin(NSPoint(x: f.midX - w / 2, y: f.midY - h / 2))
         } else {
             panel.center()
         }

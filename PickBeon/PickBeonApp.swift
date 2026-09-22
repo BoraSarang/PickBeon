@@ -32,6 +32,7 @@ struct PickBeonApp: App {
 
             popover.contentViewController = NSHostingController(
                 rootView: MenuPopupView(coordinator: co).modelContainer(container))
+            popover.contentSize = NSSize(width: 360, height: 260)
             popover.behavior = .transient
             popover.animates = true
 
@@ -52,6 +53,7 @@ struct PickBeonApp: App {
             hk.onCapture = { Task { @MainActor in AppCoordinator.shared.startCapture() } }
             hk.onTranslateSelection = { Task { @MainActor in AppCoordinator.shared.translateSelection() } }
             hk.registerDefaults()
+            Task { @MainActor in await UpdateCenter.shared.maybeAutoCheckForUpdate() }
             DebugLogger.shared.info(feature: "App", "메뉴바 상주 시작")
         }
 
@@ -60,6 +62,7 @@ struct PickBeonApp: App {
             let co = AppCoordinator.shared
             co.permissions.refresh()
             if co.permissions.allOK { co.closeOnboarding() }
+            Task { @MainActor in await UpdateCenter.shared.maybeAutoCheckForUpdate() }
         }
 
         @objc private func togglePopover(_ sender: AnyObject?) {
@@ -72,6 +75,23 @@ struct PickBeonApp: App {
             else {
                 NSApp.activate(ignoringOtherApps: true)
                 popover.show(relativeTo: btn.bounds, of: btn, preferredEdge: .minY)
+                applyPopoverMaterial()
+                Task { @MainActor in await UpdateCenter.shared.maybeAutoCheckForUpdate() }
+            }
+        }
+
+        /// NSPopover 기본 chrome을 popover material로 맞춰 글래스 루트와 겹침 방지
+        private func applyPopoverMaterial() {
+            guard let host = popover.contentViewController?.view else { return }
+            var v: NSView? = host.superview
+            while let cur = v {
+                if let fx = cur as? NSVisualEffectView {
+                    fx.material = .popover
+                    fx.blendingMode = .behindWindow
+                    fx.state = .active
+                    break
+                }
+                v = cur.superview
             }
         }
     }

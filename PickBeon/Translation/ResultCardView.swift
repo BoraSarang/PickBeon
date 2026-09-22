@@ -2,17 +2,22 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-// 시그니처 결과카드 (330px): 원문1줄 + 번역 + 썸네일 드래그 + 핀. 3초 자동숨김(에러 제외).
+// 헤더 없는 번역 스티커 (330px): accent 좌바 + 원문/번역 + 하단 액션. 3초 자동숨김(에러 제외).
 struct ResultCardView: View {
     @ObservedObject var coordinator: AppCoordinator
+    @State private var hovering = false
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            switch coordinator.cardMode {
-            case .translation: translationBody
-            case .message:     messageBody
-            case .error:       errorBody
+            HStack(alignment: .top, spacing: 0) {
+                accentBar
+                VStack(spacing: 0) {
+                    switch coordinator.cardMode {
+                    case .translation: translationBody
+                    case .message:     messageBody
+                    case .error:       errorBody
+                    }
+                }
             }
         }
         .frame(width: 330)
@@ -20,65 +25,46 @@ struct ResultCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.rPanel))
         .overlay(RoundedRectangle(cornerRadius: Theme.rPanel).stroke(Theme.line, lineWidth: 1))
         .padding(8)
-        .onHover { hovering in
-            coordinator.setCardHovering(hovering)
+        .overlay(alignment: .topTrailing) {
+            if hovering || coordinator.cardMode == .error {
+                closeButton
+                    .padding(14)
+            }
+        }
+        .onHover { h in
+            hovering = h
+            coordinator.setCardHovering(h)
         }
         .transition(.scale(scale: 0.96).combined(with: .opacity))
     }
 
-    // MARK: 헤더
-    private var header: some View {
-        HStack(alignment: .top, spacing: 10) {
-            switch coordinator.cardMode {
-            case .error:
-                StatusDot(symbol: "!", color: Theme.danger)
-            default:
-                StatusDot(symbol: "✓", color: Theme.ok)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(headerTitle)
-                    .font(Theme.font(13.5, weight: .bold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(headerSub)
-                    .font(Theme.font(12))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            Spacer()
-            Button {
-                coordinator.closeResultCard()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 22, height: 22)
-                    .background(Circle().fill(Color.primary.opacity(0.06)))
-            }
-            .buttonStyle(.plain)
-            .help(String(localized: "닫기 (Esc)"))
-        }
-        .padding(14)
-        .padding(.bottom, 2)
+    private var accentBar: some View {
+        RoundedRectangle(cornerRadius: 0)
+            .fill(coordinator.cardMode == .error ? Theme.danger : Theme.accent)
+            .frame(width: 3)
     }
 
-    private var headerTitle: String {
-        switch coordinator.cardMode {
-        case .translation: return String(localized: "번역 복사됨")
-        case .message:     return coordinator.cardTitle.isEmpty ? String(localized: "완료") : coordinator.cardTitle
-        case .error:       return coordinator.cardTitle
+    private var closeButton: some View {
+        Button {
+            coordinator.closeResultCard()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Color.primary.opacity(0.06)))
         }
-    }
-    private var headerSub: String {
-        switch coordinator.cardMode {
-        case .translation: return String(localized: "⌘V 로 붙여넣기")
-        case .message:     return coordinator.cardBody
-        case .error:       return coordinator.cardBody
-        }
+        .buttonStyle(.plain)
+        .help(String(localized: "닫기 (Esc)"))
     }
 
     // MARK: 번역
     private var translationBody: some View {
         VStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 6) {
+                Text(String(localized: "번역 복사됨 · ⌘V"))
+                    .font(Theme.font(10.5, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.85))
                 if !coordinator.latestText.isEmpty {
                     Text(coordinator.latestText.replacingOccurrences(of: "\n", with: " "))
                         .font(Theme.font(12))
@@ -113,31 +99,58 @@ struct ResultCardView: View {
                 },
             ])
         }
+        .padding(.top, 14)
         .padding(.bottom, 4)
     }
 
-    // MARK: 메시지 (이미지 복사/저장 등)
+    // MARK: 메시지
     private var messageBody: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(coordinator.cardTitle.isEmpty ? String(localized: "완료") : coordinator.cardTitle)
+                    .font(Theme.font(13.5, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                if !coordinator.cardBody.isEmpty {
+                    Text(coordinator.cardBody)
+                        .font(Theme.font(12))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 14)
+
             if let img = coordinator.latestImage {
                 thumbnail(img)
                     .padding(.horizontal, 12)
-                    .padding(.top, 2)
             }
+
             actions([
                 .init(title: String(localized: "에디터"), icon: "square.and.pencil") { coordinator.showEditor() },
                 .init(title: String(localized: "닫기"), icon: "xmark") { coordinator.closeResultCard() },
             ])
         }
         .padding(.bottom, 4)
-        .padding(.top, 2)
     }
 
     // MARK: 에러
     private var errorBody: some View {
-        actions(errorActions)
-            .padding(.top, 6)
-            .padding(.bottom, 4)
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(coordinator.cardTitle.isEmpty ? String(localized: "오류") : coordinator.cardTitle)
+                    .font(Theme.font(13.5, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                if !coordinator.cardBody.isEmpty {
+                    Text(coordinator.cardBody)
+                        .font(Theme.font(12))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 14)
+
+            actions(errorActions)
+                .padding(.bottom, 4)
+        }
     }
 
     private var errorActions: [CardBtn] {
