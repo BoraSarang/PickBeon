@@ -397,7 +397,8 @@ final class AppCoordinator: ObservableObject {
         let w = NSWindow(contentViewController: NSHostingController(rootView: v))
         w.styleMask = [.titled, .closable, .resizable, .miniaturizable]
         w.title = "PickBeon"
-        w.setContentSize(NSSize(width: 640, height: 420))
+        w.setContentSize(NSSize(width: 980, height: 620))
+        w.minSize = NSSize(width: 800, height: 520)
         w.center(); w.isReleasedWhenClosed = false
         w.delegate = WindowDropper { [weak self] in self?.editorWindow = nil }
         editorWindow = w

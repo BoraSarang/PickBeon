@@ -1,4 +1,6 @@
-# session-2026-09-22-macos.md (M2 완료)
+# session-2026-09-22-macos.md (M2+M3 완료)
+- M3: 에디터 rewrite (확대+핀+말투토글+번역오버레이+주석4종+합성복사), 빌드 ERROR 0 (2.52초)
+- M3 검증됨: 신규 경고 없음, ~/Applications 설치, PLAN_v0.3+DESIGN+CHANGELOG 갱신
 - 무엇을: 로컬 git+bd 초기화 + M2 P1-1~P1-4 적용 (통합/데드코드삭제/중복방지/핀배열)
 - 검증됨: 빌드 성공 ERROR 0, 잔여 참조 없음, 신규 경고 없음, ~/Applications 설치됨
 - 빌드: Build complete (4.51초), 개발자 서명 OK, --no-open (포커스 스틸 방지)

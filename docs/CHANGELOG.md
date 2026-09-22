@@ -1,4 +1,10 @@
 # CHANGELOG
+## v0.3.0-macos M3 에디터 완성 (2026-09-22)
+- [macos] 에디터 640×420 → 980×620 (리사이즈, 최소 800×520)
+- [macos] 📌 핀 연결 (주석 합성 포함), 존댓말/캐주얼 토글 (변경 시 재번역)
+- [macos] 번역오버레이 ON/OFF: 박스 영역에 번역문 표시 (줄분할 매핑)
+- [macos] 주석도구: 펜/화살표/박스/텍스트 + 실행취소/전체지우기, 복사·핀에 합성 포함
+- [macos] 박스 호버툴팁, error_message_ko.json 누락 3건 추가
 ## v0.2.0-macos M2 (2026-09-22)
 - [macos] P1-1 captureAndRoute 중복 switch 제거 → 캡쳐 후 applyAction 단일 경로 호출
 - [macos] P1-2 runPipeline 데드코드 삭제 (호출자 없음 확인)
