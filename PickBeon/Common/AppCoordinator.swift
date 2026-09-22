@@ -24,6 +24,7 @@ final class AppCoordinator: ObservableObject {
     @Published var cardAction: CardAction = .none
     @Published var cardTitle = ""
     @Published var cardBody = ""
+    @Published var cardPinned = false
 
     let capture = ScreenCaptureManager()
     let ocr = OCRService()
@@ -33,7 +34,10 @@ final class AppCoordinator: ObservableObject {
 
     private var overlayControllers: [CaptureOverlayController] = []
     private var escMonitor: Any?
+    private var cardEscMonitor: Any?
     private var resultPanel: NSPanel?
+    private var cardHideTimer: Timer?
+    private var cardHovering = false
     private var editorWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private var historyWindow: NSWindow?
@@ -72,7 +76,7 @@ final class AppCoordinator: ObservableObject {
         w.title = String(localized: "PickBeon 시작하기")
         w.setContentSize(NSSize(width: 360, height: 430))
         w.center(); w.isReleasedWhenClosed = false
-        w.delegate = WindowDropper { [weak self] in
+        WindowDropper.attach(to: w) { [weak self] in
             self?.permissions.stopAutoCheck()
             self?.onboardingWindow = nil
         }
@@ -106,14 +110,14 @@ final class AppCoordinator: ObservableObject {
                     guard let id = screen.displayID,
                           let disp = content.displays.first(where: { $0.displayID == id }) else { continue }
                     let ctl = CaptureOverlayController(screen: screen, display: disp)
-                    ctl.onSelect = { [weak self] rect, display, pointSize in
-                        self?.didSelectArea(rect, display: display, pointSize: pointSize, controller: ctl)
+                    ctl.onSelect = { rect, display, pointSize in
+                        self.didSelectArea(rect, display: display, pointSize: pointSize, controller: ctl)
                     }
-                    ctl.onPerform = { [weak self] action, image in
-                        self?.performAction(action, image: image)
+                    ctl.onPerform = { action, image in
+                        self.performAction(action, image: image)
                     }
-                    ctl.onCancel = { [weak self] in self?.closeOverlay() }
-                    ctl.onReuse = { [weak self] in self?.repeatFromOverlay() }
+                    ctl.onCancel = { self.closeOverlay() }
+                    ctl.onReuse = { self.repeatFromOverlay() }
                     ctl.show()
                     overlayControllers.append(ctl)
                     shown += 1
@@ -280,10 +284,11 @@ final class AppCoordinator: ObservableObject {
         panel.title = "PickBeon Pin"
         panel.isFloatingPanel = true
         panel.level = .floating
+        panel.hidesOnDeactivate = false
         panel.setContentSize(NSSize(width: 400, height: 300))
         panel.center()
         panel.isReleasedWhenClosed = false
-        panel.delegate = WindowDropper { [weak self, weak panel] in
+        WindowDropper.attach(to: panel) { [weak self, weak panel] in
             guard let panel else { return }
             self?.pinPanels.removeAll { $0 === panel }
         }
@@ -311,13 +316,13 @@ final class AppCoordinator: ObservableObject {
         w.title = String(localized: "PickBeon 설정")
         w.setContentSize(NSSize(width: 640, height: 430))
         w.center(); w.isReleasedWhenClosed = false
-        w.delegate = WindowDropper { [weak self] in self?.settingsWindow = nil }
+        WindowDropper.attach(to: w) { [weak self] in self?.settingsWindow = nil }
         settingsWindow = w
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
     }
 
-    // MARK: - 파이프라인: OCR → 번역 → 복사 → 결과카드
+    // MARK: - 파이프라인: OCR → 번역 → 복사 → afterCapture 라우팅
     func runTranslate(img: NSImage) async {
         FileLog.log("OCR 시작")
         do {
@@ -343,9 +348,7 @@ final class AppCoordinator: ObservableObject {
                 clipboard.add(text: joined, translated: out, context: ctx)
             }
             DebugLogger.shared.cache("파이프라인 완료, 클립보드 복사")
-            cardMode = .translation
-            cardAction = .none
-            showResultCard()
+            routeAfterCapture()
         } catch PickBeonError.trans(_, let code) where code == "E-MAC-TRANS-0005" {
             FileLog.log("번역 언어팩 미설치")
             cardMode = .error
@@ -364,30 +367,120 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - 결과 카드 (합의 레이아웃, 내용 맞춤 높이)
-    func showResultCard() {
+    /// 설정: afterCapture (card=번역카드 / editor=에디터 / clipboard=토스트만)
+    /// nearMouse: 선택번역 등 마우스 근처에 카드를 띄울 때 드래그 직후 위치
+    private func routeAfterCapture(nearMouse: CGPoint? = nil) {
+        switch AppSettings.shared.afterCapture {
+        case "editor":
+            showEditor()
+        case "clipboard":
+            cardMode = .message
+            cardAction = .none
+            cardTitle = String(localized: "번역 복사됨")
+            cardBody = String(localized: "⌘V 로 붙여넣기")
+            showResultCard(nearMouse: nearMouse)
+        default:
+            cardMode = .translation
+            cardAction = .none
+            showResultCard(nearMouse: nearMouse)
+        }
+    }
+
+    // MARK: - 결과 카드 (시그니처 330px, 3초 자동숨김·핀 유지)
+    func showResultCard(nearMouse: CGPoint? = nil) {
         closeResultCard()
+        cardPinned = false
+        cardHovering = false
         let v = ResultCardView(coordinator: self)
         let host = NSHostingController(rootView: v)
-        let panel = NSPanel(contentViewController: host)
+        let panel = KeyableResultPanel(contentViewController: host)
         panel.styleMask = [.nonactivatingPanel, .titled, .closable, .fullSizeContentView]
         panel.title = "PickBeon"
         panel.titlebarAppearsTransparent = true
         panel.isFloatingPanel = true
         panel.level = .floating
+        // 단축키로 비활성 상태에서 띄울 때도 카드 유지 (기본 true면 deactivate 시 숨음)
+        panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         host.view.layoutSubtreeIfNeeded()
         let fit = host.view.fittingSize
-        panel.setContentSize(NSSize(width: 460, height: min(560, max(220, fit.height))))
-        if let f = NSScreen.main?.visibleFrame {
-            panel.setFrameOrigin(NSPoint(x: f.maxX - 480, y: f.maxY - min(560, max(220, fit.height)) - 30))
-        }
+        let w: CGFloat = 346
+        let h = min(520, max(180, fit.height))
+        panel.setContentSize(NSSize(width: w, height: h))
+        placeCard(panel, w: w, h: h, nearMouse: nearMouse)
         panel.isReleasedWhenClosed = false
-        panel.delegate = WindowDropper { [weak self] in self?.resultPanel = nil }
+        WindowDropper.attach(to: panel) { [weak self] in
+            self?.resultPanel = nil
+            self?.cancelCardTimer()
+            if let m = self?.cardEscMonitor { NSEvent.removeMonitor(m); self?.cardEscMonitor = nil }
+        }
         resultPanel = panel
         panel.orderFrontRegardless()
+        // Esc로 닫기
+        cardEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            if e.keyCode == 53 { Task { @MainActor in self?.closeResultCard() }; return nil }
+            return e
+        }
+        scheduleCardHide()
     }
-    func closeResultCard() { resultPanel?.orderOut(nil); resultPanel = nil }
+
+    /// 마우스 근처(오른쪽 우선, 모자라면 왼쪽) 또는 기본 우상단 배치
+    private func placeCard(_ panel: NSPanel, w: CGFloat, h: CGFloat, nearMouse: CGPoint?) {
+        let margin: CGFloat = 12
+        let gap: CGFloat = 16
+        if let mouse = nearMouse {
+            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+            if let f = screen?.visibleFrame {
+                var x = mouse.x + gap
+                var y = mouse.y - h / 2
+                if x + w > f.maxX - margin { x = mouse.x - w - gap }
+                y = min(max(y, f.minY + margin), f.maxY - h - margin)
+                x = min(max(x, f.minX + margin), f.maxX - w - margin)
+                panel.setFrameOrigin(NSPoint(x: x, y: y))
+                return
+            }
+        }
+        if let f = NSScreen.main?.visibleFrame {
+            panel.setFrameOrigin(NSPoint(x: f.maxX - w - 24, y: f.maxY - h - 24))
+        }
+    }
+
+    /// 번역·메시지만 3초 자동숨김. 에러카드는 유지(사용자 액션 필요).
+    private func scheduleCardHide() {
+        cancelCardTimer()
+        guard cardMode != .error, !cardPinned else { return }
+        cardHideTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.cardHovering, !self.cardPinned else { return }
+                self.closeResultCard()
+            }
+        }
+    }
+
+    private func cancelCardTimer() {
+        cardHideTimer?.invalidate()
+        cardHideTimer = nil
+    }
+
+    func setCardHovering(_ h: Bool) {
+        cardHovering = h
+        if h { cancelCardTimer() }
+        else { scheduleCardHide() }
+    }
+
+    func toggleCardPin() {
+        cardPinned.toggle()
+        if cardPinned { cancelCardTimer() }
+        else { scheduleCardHide() }
+    }
+
+    func closeResultCard() {
+        cancelCardTimer()
+        cardHovering = false
+        resultPanel?.orderOut(nil)
+        resultPanel = nil
+        if let m = cardEscMonitor { NSEvent.removeMonitor(m); cardEscMonitor = nil }
+    }
 
     // MARK: - 번역 에디터 (Jot 자리, 캡쳐 후에만)
     func showEditor() {
@@ -400,42 +493,42 @@ final class AppCoordinator: ObservableObject {
         w.setContentSize(NSSize(width: 980, height: 620))
         w.minSize = NSSize(width: 800, height: 520)
         w.center(); w.isReleasedWhenClosed = false
-        w.delegate = WindowDropper { [weak self] in self?.editorWindow = nil }
+        WindowDropper.attach(to: w) { [weak self] in self?.editorWindow = nil }
         editorWindow = w
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
     }
 
-    // MARK: - 텍스트 선택 번역 (AX)
+    // MARK: - 텍스트 선택 번역 (AX + Safari용 Cmd+C 폴백)
     func translateSelection() {
         guard permissions.axOK else { showOnboarding(); return }
-        guard let sel = AXSelectionReader.readSelectedText(), !sel.isEmpty else {
-            FileLog.log("선택 텍스트 없음")
-            cardMode = .message
-            cardAction = .none
-            cardTitle = String(localized: "선택된 텍스트 없음")
-            cardBody = String(localized: "문자를 드래그로 선택한 뒤 단축키를 누르세요.")
-            showResultCard()
-            return
-        }
-        FileLog.log("선택 번역: \(sel.prefix(30))")
+        // 드래그 직후 마우스 위치 — 카드를 그 근처에 띄움
+        let mouse = NSEvent.mouseLocation
         Task {
+            guard let sel = await AXSelectionReader.readSelectedTextWithFallback(), !sel.isEmpty else {
+                FileLog.log("선택 텍스트 없음")
+                cardMode = .message
+                cardAction = .none
+                cardTitle = String(localized: "선택된 텍스트 없음")
+                cardBody = String(localized: "문자를 드래그로 선택한 뒤 단축키를 누르세요.")
+                showResultCard(nearMouse: mouse)
+                return
+            }
+            FileLog.log("선택 번역: \(sel.prefix(30))")
             do {
                 let out = try await translator.translate(sel, polite: AppSettings.shared.politeTone)
                 latestText = sel; latestTranslated = out
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(out, forType: .string)
                 if let ctx = modelContext { clipboard.add(text: sel, translated: out, context: ctx) }
-                cardMode = .translation
-                cardAction = .none
-                showResultCard()
+                routeAfterCapture(nearMouse: mouse)
             } catch {
                 FileLog.log("선택 번역 실패 \(error)")
                 cardMode = .error
                 cardAction = .retryTranslate
                 cardTitle = String(localized: "⚠ 번역 실패")
                 cardBody = String(localized: "다시 시도해주세요.")
-                showResultCard()
+                showResultCard(nearMouse: mouse)
             }
         }
     }
@@ -448,29 +541,61 @@ final class AppCoordinator: ObservableObject {
         w.title = "DebugPanel"
         w.setContentSize(NSSize(width: 320, height: 140))
         w.isReleasedWhenClosed = false
-        w.delegate = WindowDropper { [weak self] in self?.debugWindow = nil }
+        WindowDropper.attach(to: w) { [weak self] in self?.debugWindow = nil }
         debugWindow = w
         w.makeKeyAndOrderFront(nil)
     }
 
-    // MARK: - 히스토리
+    // MARK: - 히스토리 (Raycast식 커서 근처 nonactivating 패널)
     func showHistory() {
         if historyWindow != nil { historyWindow?.makeKeyAndOrderFront(nil); return }
         let v = ClipboardPopupView(store: clipboard)
-        let w = NSWindow(contentViewController: NSHostingController(rootView: v))
-        w.styleMask = [.titled, .closable, .resizable]
-        w.title = String(localized: "기록")
-        w.setContentSize(NSSize(width: 420, height: 480))
-        w.center(); w.isReleasedWhenClosed = false
-        w.delegate = WindowDropper { [weak self] in self?.historyWindow = nil }
-        historyWindow = w
-        NSApp.activate(ignoringOtherApps: true)
-        w.makeKeyAndOrderFront(nil)
+        let panel = KeyableResultPanel(contentViewController: NSHostingController(rootView: v))
+        panel.styleMask = [.nonactivatingPanel, .titled, .fullSizeContentView, .closable]
+        panel.title = ""
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.setContentSize(NSSize(width: 440, height: 480))
+        panel.isReleasedWhenClosed = false
+        WindowDropper.attach(to: panel) { [weak self] in self?.historyWindow = nil }
+        // 커서 근처 배치 (화면 안으로 클램프)
+        let loc = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(loc) } ?? NSScreen.main
+        if let f = screen?.visibleFrame {
+            var x = loc.x + 12
+            var y = loc.y - 480 - 12
+            if x + 440 > f.maxX { x = f.maxX - 440 - 8 }
+            if y < f.minY { y = min(loc.y + 24, f.maxY - 480 - 8) }
+            panel.setFrameOrigin(NSPoint(x: max(f.minX + 8, x), y: max(f.minY + 8, y)))
+        } else {
+            panel.center()
+        }
+        historyWindow = panel
+        panel.makeKeyAndOrderFront(nil)
     }
+}
+
+// 키 윈도우 가능 패널 (비활성 패널이어도 텍스트필드 포커스 가능)
+final class KeyableResultPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 final class WindowDropper: NSObject, NSWindowDelegate {
     let onClose: () -> Void
     init(_ onClose: @escaping () -> Void) { self.onClose = onClose }
     func windowWillClose(_ notification: Notification) { onClose() }
+
+    /// delegate는 weak — 호출부에서 인스턴스가 즉시 해제되지 않도록 window에 assoc retained 보관
+    @MainActor
+    static func attach(to window: NSWindow, _ onClose: @escaping () -> Void) {
+        let d = WindowDropper(onClose)
+        window.delegate = d
+        objc_setAssociatedObject(window, &WindowDropper.assocKey, d, .OBJC_ASSOCIATION_RETAIN)
+    }
+    nonisolated(unsafe) private static var assocKey: UInt8 = 0
 }

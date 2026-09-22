@@ -18,7 +18,7 @@ final class AppSettings: ObservableObject {
     @AppStorage("encryptStore") var encryptStore: Bool = false
     @AppStorage("overlayOn") var overlayOn: Bool = true
     @AppStorage("politeTone") var politeTone: Bool = true
-    @AppStorage("afterCapture") var afterCapture: String = "editor" // clipboard, save, editor
+    @AppStorage("afterCapture") var afterCapture: String = "card" // card, editor, clipboard
 
     var historyLimit: HistoryLimit { HistoryLimit(rawValue: historyLimitRaw) ?? .n20 }
 

@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 import AppKit
 
 // Carbon RegisterEventHotKey 기반 전역 단축키 (추가 권한 불필요).
-// 캡쳐 ⌥⌃P (keyCode 35), 선택 번역 ⌥⌃Z (keyCode 6). modifier ⌥+⌃ = 6144.
+// 캡쳐 ⌘⇧X (keyCode 7, cmd+shift=768), 선택 번역 ⌘⌥Z (keyCode 6, cmd+opt=2304). PLAN_v0.1 부합.
 @MainActor
 final class GlobalHotKeyService {
     static let shared = GlobalHotKeyService()
@@ -20,9 +20,9 @@ final class GlobalHotKeyService {
 
     func registerDefaults() {
         installHandlerOnce()
-        register(signature: 1, keyCode: 35, modifiers: 6144) { [weak self] in self?.onCapture?() }
-        register(signature: 2, keyCode: 6, modifiers: 6144) { [weak self] in self?.onTranslateSelection?() }
-        DebugLogger.shared.info(feature: "HotKey", "전역 단축키 등록 ⌥⌃P/⌥⌃Z")
+        register(signature: 1, keyCode: 7, modifiers: 768) { [weak self] in self?.onCapture?() }
+        register(signature: 2, keyCode: 6, modifiers: 2304) { [weak self] in self?.onTranslateSelection?() }
+        DebugLogger.shared.info(feature: "HotKey", "전역 단축키 등록 ⌘⇧X/⌘⌥Z")
     }
 
     private func installHandlerOnce() {
@@ -46,7 +46,7 @@ final class GlobalHotKeyService {
     }
 
     private func register(signature: UInt32, keyCode: UInt32, modifiers: UInt32, _ cb: @escaping () -> Void) {
-        var hid = EventHotKeyID(signature: signature, id: 0)
+        let hid = EventHotKeyID(signature: signature, id: 0)
         var ref: EventHotKeyRef?
         let st = RegisterEventHotKey(keyCode, OptionBits(modifiers), hid,
                                      GetApplicationEventTarget(), 0, &ref)

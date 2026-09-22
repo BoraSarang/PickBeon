@@ -51,47 +51,62 @@ struct TranslationEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider()
+            Rectangle().fill(Theme.line).frame(height: 1)
             HStack(spacing: 0) {
                 imagePane.frame(minWidth: 420)
+                Rectangle().fill(Theme.line).frame(width: 1)
                 rightPanel.frame(width: 300)
             }.frame(minHeight: 420)
-        }.frame(minWidth: 800, minHeight: 520)
+        }
+        .frame(minWidth: 800, minHeight: 520)
+        .background(Theme.bg)
     }
 
     // MARK: - 툴바
     private var toolbar: some View {
-        HStack(spacing: 2) {
-            toolBtn("☝️", tip: String(localized: "선택"), active: tool == .browse) { tool = .browse }
-            toolBtn("✒️", tip: String(localized: "펜"), active: tool == .pen) { toggleTool(.pen) }
-            toolBtn("↗", tip: String(localized: "화살표"), active: tool == .arrow) { toggleTool(.arrow) }
-            toolBtn("▢", tip: String(localized: "박스"), active: tool == .rect) { toggleTool(.rect) }
-            toolBtn("T", tip: String(localized: "텍스트 (탭して 입력)"), active: tool == .text) { toggleTool(.text) }
-            toolBtn("◰", tip: String(localized: "OCR 박스 표시"), active: showBoxes) { showBoxes.toggle() }
-            toolBtn(String(localized: "역"), tip: String(localized: "번역 오버레이"), active: showTransOverlay) { showTransOverlay.toggle() }
-            toolBtn("↩", tip: String(localized: "실행 취소"), active: false, enabled: !annotations.isEmpty) { _ = annotations.popLast() }
-            toolBtn("🗑", tip: String(localized: "주석 지우기"), active: false, enabled: !annotations.isEmpty) { annotations.removeAll() }
+        HStack(spacing: 4) {
+            IconToolButton(systemName: "cursorarrow", tip: String(localized: "선택"), active: tool == .browse) { tool = .browse }
+            IconToolButton(systemName: "pencil.tip", tip: String(localized: "펜"), active: tool == .pen) { toggleTool(.pen) }
+            IconToolButton(systemName: "arrow.up.right", tip: String(localized: "화살표"), active: tool == .arrow) { toggleTool(.arrow) }
+            IconToolButton(systemName: "rectangle", tip: String(localized: "박스"), active: tool == .rect) { toggleTool(.rect) }
+            IconToolButton(systemName: "textformat", tip: String(localized: "텍스트 (탭して 입력)"), active: tool == .text) { toggleTool(.text) }
+            Rectangle().fill(Theme.line).frame(width: 1, height: 18).padding(.horizontal, 4)
+            IconToolButton(systemName: "square.dashed", tip: String(localized: "OCR 박스 표시"), active: showBoxes) { showBoxes.toggle() }
+            IconToolButton(systemName: "character.bubble", tip: String(localized: "번역 오버레이"), active: showTransOverlay) { showTransOverlay.toggle() }
+            IconToolButton(systemName: "arrow.uturn.backward", tip: String(localized: "실행 취소"), enabled: !annotations.isEmpty) { _ = annotations.popLast() }
+            IconToolButton(systemName: "trash", tip: String(localized: "주석 지우기"), enabled: !annotations.isEmpty) { annotations.removeAll() }
             Spacer()
-            Button(String(localized: "⧉ 복사")) { copyAll() }
-                .buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
-            Button("📌") { pinCurrent() }.buttonStyle(.plain).font(.system(size: 12)).foregroundColor(.secondary)
-                .help(String(localized: "핀 (화면 상주)"))
-        }.padding(.horizontal, 12).padding(.vertical, 9)
+            Button {
+                copyAll()
+            } label: {
+                Label(String(localized: "복사"), systemImage: "doc.on.doc")
+                    .font(Theme.font(12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: Theme.rChip).fill(Color.primary.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+            Button {
+                pinCurrent()
+            } label: {
+                Image(systemName: "pin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(7)
+                    .background(RoundedRectangle(cornerRadius: Theme.rChip).fill(Color.primary.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "핀 (화면 상주)"))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Theme.surface)
     }
 
     private func toggleTool(_ t: AnnotTool) {
         tool = (tool == t) ? .browse : t
         if tool != .text { pendingNote = nil }
-    }
-
-    private func toolBtn(_ t: String, tip: String, active: Bool, enabled: Bool = true, _ act: @escaping () -> Void) -> some View {
-        Button(t, action: act)
-            .buttonStyle(.plain).font(.system(size: 13)).padding(7)
-            .background(active ? Color.accentColor : Color.clear)
-            .foregroundColor(active ? .white : .secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .disabled(!enabled).opacity(enabled ? 1 : 0.4)
-            .help(tip)
     }
 
     // MARK: - 이미지 영역
@@ -114,7 +129,7 @@ struct TranslationEditorView: View {
                         if let anchor = pendingNote { noteField(map, anchor) }
                     }.frame(width: geo.size.width, height: geo.size.height)
                 }
-            } else { Color.gray.opacity(0.15) }
+            } else { Theme.surface2 }
         }
     }
 
@@ -123,11 +138,16 @@ struct TranslationEditorView: View {
             ForEach(Array(ocr.lines.enumerated()), id: \.element.id) { i, l in
                 let r = map.rect(l.box)
                 ZStack(alignment: .topLeading) {
-                    Rectangle().stroke(selected == l.id ? Color.white : Color(red: 0.49, green: 0.49, blue: 0.96), lineWidth: 1.5)
+                    Rectangle()
+                        .stroke(selected == l.id ? Color.white : Theme.accent, lineWidth: 1.5)
                         .frame(width: max(r.width, 8), height: max(r.height, 8))
-                    Text("\(i + 1)").font(.system(size: 10, weight: .bold))
-                        .frame(width: 18, height: 18).background(selected == l.id ? Color.accentColor : Color.black.opacity(0.75))
-                        .foregroundColor(.white).clipShape(Circle()).offset(x: -9, y: -9)
+                    Text("\(i + 1)")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 18, height: 18)
+                        .background(selected == l.id ? Theme.accent : Color.black.opacity(0.75))
+                        .foregroundColor(.white)
+                        .clipShape(Circle())
+                        .offset(x: -9, y: -9)
                 }
                 .position(x: r.midX, y: r.midY)
                 .onTapGesture { selected = l.id }
@@ -275,43 +295,56 @@ struct TranslationEditorView: View {
             .onExitCommand { pendingNote = nil; pendingText = "" }
     }
 
-    // MARK: - 우측 패널
+    // MARK: - 우측 패널 (세로 분배: 탭 고정 → 본문 확장 → 액션 고정)
     private var rightPanel: some View {
-        VStack(spacing: 8) {
-            Picker("", selection: $politeTone) {
-                Text(String(localized: "존댓말")).tag(true)
-                Text(String(localized: "캐주얼")).tag(false)
-            }.pickerStyle(.segmented)
-            .onChange(of: politeTone) { _, _ in Task { await retranslate() } }
-            HStack(spacing: 0) {
+        VStack(spacing: 10) {
+            HStack(spacing: 4) {
                 TTab(0, "OCR"); TTab(1, String(localized: "번역"))
-            }.padding(3).background(Color.black.opacity(0.25)).clipShape(RoundedRectangle(cornerRadius: 9))
+            }
+            .padding(3)
+            .background(Theme.surface2)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
             if tab == 0 {
                 List(ocr.lines, selection: $selected) { l in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(l.text).font(.system(size: 12.5))
-                        Text(String(format: String(localized: "신뢰도 %.0f%%"), l.confidence * 100)).font(.system(size: 11)).foregroundColor(.secondary)
+                        Text(l.text).font(Theme.font(12.5))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(String(format: String(localized: "신뢰도 %.0f%%"), l.confidence * 100))
+                            .font(Theme.font(11))
+                            .foregroundStyle(Theme.textSecondary)
                     }.padding(2)
                 }.listStyle(.plain)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Text(translator.result.isEmpty ? coordinator.latestTranslated : translator.result)
-                    .font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(9).background(Color(red: 0.1, green: 0.11, blue: 0.15)).clipShape(RoundedRectangle(cornerRadius: 9))
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.accentColor.opacity(0.35)))
+                toneToggle
+                TransPanel {
+                    ScrollView {
+                        Text(currentTranslation)
+                            .font(Theme.font(13))
+                            .foregroundStyle(Theme.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(.vertical, 2)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if showTransOverlay {
                     if overlayBusy {
-                        ProgressView(String(localized: "줄 매핑 중…")).font(.system(size: 11)).foregroundColor(.secondary)
+                        ProgressView(String(localized: "줄 매핑 중…")).font(Theme.font(11))
+                            .foregroundStyle(Theme.textSecondary)
                     } else {
                         Text(String(format: String(localized: "오버레이 %d/%d줄"), overlayMap.count, ocr.lines.count))
-                            .font(.system(size: 11)).foregroundColor(.secondary)
+                            .font(Theme.font(11))
+                            .foregroundStyle(Theme.textSecondary)
                     }
                 }
-                Button(translator.isTranslating ? String(localized: "번역 중…") : String(localized: "다시 번역")) {
-                    Task { await retranslate() }
-                }.buttonStyle(.borderedProminent).font(.system(size: 12)).disabled(translator.isTranslating)
+                bottomActions
             }
-            Spacer()
-        }.frame(minWidth: 210).padding(12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(12)
+        .background(Theme.bg)
         .onChange(of: showTransOverlay) { _, on in
             if on { Task { overlayBusy = true; await refreshOverlay(); overlayBusy = false } }
         }
@@ -320,10 +353,68 @@ struct TranslationEditorView: View {
         }
     }
 
+    private var currentTranslation: String {
+        translator.result.isEmpty ? coordinator.latestTranslated : translator.result
+    }
+
+    private var bottomActions: some View {
+        VStack(spacing: 8) {
+            Button(translator.isTranslating ? String(localized: "번역 중…") : String(localized: "다시 번역")) {
+                Task { await retranslate() }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.accent)
+            .font(Theme.font(12, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .disabled(translator.isTranslating)
+            HStack(spacing: 8) {
+                Button {
+                    copyAll()
+                } label: {
+                    Label(String(localized: "복사"), systemImage: "doc.on.doc")
+                        .font(Theme.font(11.5, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    coordinator.showHistory()
+                } label: {
+                    Label(String(localized: "기록"), systemImage: "clock")
+                        .font(Theme.font(11.5, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+            HStack {
+                Spacer()
+                Text(String(format: String(localized: "%d자"), currentTranslation.count))
+                    .font(Theme.font(10.5))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    private var toneToggle: some View {
+        Picker("", selection: $politeTone) {
+            Text(String(localized: "존댓말")).tag(true)
+            Text(String(localized: "캐주얼")).tag(false)
+        }.pickerStyle(.segmented)
+        .labelsHidden()
+        .tint(Theme.accent)
+        .onChange(of: politeTone) { _, _ in Task { await retranslate() } }
+    }
+
     private func TTab(_ i: Int, _ t: String) -> some View {
-        Button(t) { tab = i }.buttonStyle(.plain).font(.system(size: 12, weight: .bold))
-            .frame(maxWidth: .infinity).padding(.vertical, 6)
-            .background(tab == i ? Color.white.opacity(0.14) : Color.clear).clipShape(RoundedRectangle(cornerRadius: 7))
+        Button { tab = i } label: {
+            Text(t)
+                .font(Theme.font(12, weight: .semibold))
+                .foregroundStyle(tab == i ? Theme.textPrimary : Theme.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 26)
+                .contentShape(Rectangle())
+                .background(tab == i ? Color.primary.opacity(0.1) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - 동작
