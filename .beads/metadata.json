@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "pickbeon",
+  "project_id": "7d8f4ee3-180d-4b8f-b2af-45ee7d61747e"
+}
