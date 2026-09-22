@@ -9,3 +9,7 @@
 - 보류(P2): Dark/Tinted 아이콘, 단축키 커스텀, E2E, 주석도구, BYOK
 - 문서: TODO M2 체크, CHANGELOG v0.2.0-M2, bd 4건 close
 - 로그: FileLog + DebugPanel, error_message_ko.json 변경 없음
+## 중단점 (재시작 가이드)
+- 브랜치: feat/macos-m3 위. main 병합 안 됨 → 재시작 1순위는 병합+앱 실행확인
+- 재시작 순서: ① bd merge 이슈 (m2/m3→main) ② M1 사용자 검증 ③ P2 (아이콘/단축키/E2E/BYOK)
+- open 이슈 6건: P0 2건 (병합, M1검증), P2 3건, P3 1건 (BYOK)
