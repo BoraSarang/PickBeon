@@ -1,4 +1,15 @@
-# TODO — PickBeon v0.4
+# TODO — PickBeon v0.5
+- [x] 리디자인 P5 팝오버 A안 (2탭, overflow 차단, contentSize)
+- [x] 리디자인 P6 전체검색 미리보기 pin
+- [x] 리디자인 P7 Blue 팔레트 + hover 대비
+- [x] 리디자인 빌드 ERROR 0 (P5~P7)
+- [x] 업데이트 가이드 적용: ReleaseChecker + UpdateCenter + 설정탭 + 팝오버 배너 + release.yml (GitHub repo push·tag는 사용자 몝)
+- [x] 히스토리 호버 미리보기 (전체검색 우측 + 팝오버 기록 피크)
+- [x] 리디자인 P1 Pick Hub 탭형 팝오버 (히어로 제거, glassStroke/rTab 토큰)
+- [x] 리디자인 P2 결과카드 헤더 없는 번역 스티커
+- [x] 리디자인 P3 툴바 번역 primary + Same area pill + 힌트바 갱신
+- [x] 리디자인 P4 전체검색 필터 + 하단 키보드 힌트
+- [ ] 리디자인 육안 검증 (팝오버 탭/카드/툴바/기록 필터) — 사용자 써보기 후 UI 개선 시기
 - [x] M4 T-01 Theme.swift 토큰 + 공용 컴포넌트 (custom 전환)
 - [x] M4 T-02 메뉴/온보딩/에디터/설정/툴바 스킨 (SF Symbols+호버, 하드코딩 0건)
 - [x] M5 T-03 결과카드 330px 시그니처 (3초 숨김/썸네일 드래그/핀)
@@ -9,7 +20,7 @@
 - [x] M5 T-08 단축키 ⌘⇧X/⌘⌥Z 통일
 - [ ] M1 사용자 검증 (캡쳐→번역 전체→⌘V, 박스 정렬) — 기존 P0 (pickbeon-6yo)
 - [x] M4/M5 사용자 육안 검증 (카드 마우스근처·유지, 에디터 우측패널, loupe 제거, 핸들/3초숨김/히스토리) — pickbeon-qir close
-- [ ] feat/macos-m3 → main 병합 (pickbeon-17m)
+- [x] feat/macos-m3 → main 병합 (pickbeon-17m, ff cc46215)
 - [ ] P2 보류: Dark/Tinted 아이콘, 단축키 커스텀, E2E, BYOK
 ## 완료 이력
 - [x] M3 에디터 완성 (확대/핀/말투/오버레이/주석) — v0.3

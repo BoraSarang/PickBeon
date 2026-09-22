@@ -20,7 +20,7 @@ struct SurfaceCard<Content: View>: View {
     }
 }
 
-// MARK: - 키캡 (⌘⇧X 등)
+// MARK: - 키캡 (⌘⇧X 등) — 글래스 패널용 fill
 struct KeyCap: View {
     let text: String
     var body: some View {
@@ -28,17 +28,17 @@ struct KeyCap: View {
             .font(Theme.font(11, weight: .medium, mono: true))
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(Theme.heroKbd)
+            .background(Theme.kbdFill)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rChip))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.rChip)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(Theme.glassStroke, lineWidth: 1)
             )
             .foregroundStyle(Theme.textPrimary)
     }
 }
 
-// MARK: - 히어로 그라데이션 블록
+// MARK: - 히어로 그라데이션 블록 (온보딩/설정 로고 전용 — 메뉴 팝오버에서 사용 금지)
 struct HeroGradient<Content: View>: View {
     @ViewBuilder var content: () -> Content
     var body: some View {
@@ -134,10 +134,10 @@ struct FooterButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 11)
-            .foregroundStyle(prominent ? Color.white : Theme.textPrimary)
+                    .foregroundStyle(prominent ? Color.white : Theme.textPrimary)
             .background(
                 Rectangle()
-                    .fill(prominent ? Theme.accent : (hovering ? Color.white.opacity(0.08) : .clear))
+                    .fill(prominent ? Theme.accent : (hovering ? Theme.rowHover : .clear))
             )
             .contentShape(Rectangle())
         }

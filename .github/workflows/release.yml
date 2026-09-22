@@ -1,0 +1,50 @@
+name: Release
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions:
+  contents: write
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - name: Verify tag matches bundle version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          EXPECTED="${TAG#v}"
+          ACTUAL="$(/usr/libexec/PlistBuddy -c \
+            'Print CFBundleShortVersionString' Packaging/Info.plist)"
+          [ "$EXPECTED" = "$ACTUAL" ]
+      - name: Build (release)
+        run: swift build -c release
+      - name: Package app + ad-hoc sign + zip
+        run: |
+          BIN="$(pwd)/.build/release/PickBeon"
+          APP="$(pwd)/build/PickBeon.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp "$BIN" "$APP/Contents/MacOS/PickBeon"
+          cp Packaging/Info.plist "$APP/Contents/Info.plist"
+          cp Packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          cp -R Packaging/ko.lproj Packaging/en.lproj "$APP/Contents/Resources/" || true
+          if [ -f Packaging/Icons/MenuBar/menubar-18.png ]; then
+            cp Packaging/Icons/MenuBar/menubar-18.png "$APP/Contents/Resources/"
+            cp Packaging/Icons/MenuBar/menubar-18@2x.png "$APP/Contents/Resources/" || true
+          fi
+          echo "APPL????" > "$APP/Contents/PkgInfo"
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP" "PickBeon-${GITHUB_REF_NAME}.zip"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [ -f "release-notes/${TAG}.md" ]; then
+            gh release create "$TAG" --title "PickBeon $TAG" \
+              --notes-file "release-notes/${TAG}.md" "PickBeon-${TAG}.zip"
+          else
+            gh release create "$TAG" --title "PickBeon $TAG" \
+              --generate-notes "PickBeon-${TAG}.zip"
+          fi
