@@ -1,0 +1,9 @@
+# session-2026-09-22-macos.md (M2 완료)
+- 무엇을: 로컬 git+bd 초기화 + M2 P1-1~P1-4 적용 (통합/데드코드삭제/중복방지/핀배열)
+- 검증됨: 빌드 성공 ERROR 0, 잔여 참조 없음, 신규 경고 없음, ~/Applications 설치됨
+- 빌드: Build complete (4.51초), 개발자 서명 OK, --no-open (포커스 스틸 방지)
+- 사용자 검증 대기: M1 플로우 + M2 회귀 (반복캡쳐, 히스토리 중복, 핀 다중)
+- 다음: M1 사용자 검증 확인 후 P2 또는 릴리스 판단
+- 보류(P2): Dark/Tinted 아이콘, 단축키 커스텀, E2E, 주석도구, BYOK
+- 문서: TODO M2 체크, CHANGELOG v0.2.0-M2, bd 4건 close
+- 로그: FileLog + DebugPanel, error_message_ko.json 변경 없음

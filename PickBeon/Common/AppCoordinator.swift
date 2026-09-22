@@ -183,7 +183,7 @@ final class AppCoordinator: ObservableObject {
         Task { await self.applyAction(action, image: image) }
     }
 
-    private func applyAction(_ action: CaptureAction, image: NSImage) async {
+    func applyAction(_ action: CaptureAction, image: NSImage) async {
         switch action {
         case .copy:
             NSPasteboard.general.clearContents()
@@ -238,37 +238,12 @@ final class AppCoordinator: ObservableObject {
         Task { await captureAndRoute(area: lastArea, display: d, pointSize: lastPointSize, action: .translate) }
     }
 
-    // MARK: - 캡쳐 1회 → 액션 분기 (중복 캡쳐 금지)
+    // MARK: - 캡쳐 1회 → 액션 분기 (중복 캡쳐 금지, 분기는 applyAction 단일 경로)
     func captureAndRoute(area: CGRect, display: SCDisplay, pointSize: CGSize, action: CaptureAction) async {
         do {
             let img = try await capture.captureArea(area, display: display, pointSize: pointSize)
             latestImage = img
-            switch action {
-            case .copy:
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([img])
-                cardMode = .message
-                cardAction = .none
-                cardTitle = String(localized: "이미지 복사됨")
-                cardBody = String(localized: "⌘V 로 붙여넣기")
-                showResultCard()
-            case .save:
-                let url = try savePNG(img)
-                cardMode = .message
-                cardAction = .none
-                cardTitle = String(localized: "저장됨")
-                cardBody = url.path(percentEncoded: false)
-                showResultCard()
-            case .pin:
-                pinImage(img)
-            case .ocr:
-                latestText = ""
-                let lines = try await ocr.recognize(img)
-                latestText = lines.map(\.text).joined(separator: "\n")
-                showEditor()
-            case .translate:
-                await runTranslate(img: img)
-            }
+            await applyAction(action, image: img)
         } catch {
             DebugLogger.shared.error(code: "E-MAC-CAPTURE-0001", "캡쳐 실패 \(error)")
             cardMode = .error
@@ -295,7 +270,7 @@ final class AppCoordinator: ObservableObject {
         return url
     }
 
-    private var pinPanel: NSPanel?
+    private var pinPanels: [NSPanel] = []
     func pinImage(_ img: NSImage) {
         let iv = NSImageView(image: img)
         iv.imageScaling = .scaleProportionallyUpOrDown
@@ -308,7 +283,11 @@ final class AppCoordinator: ObservableObject {
         panel.setContentSize(NSSize(width: 400, height: 300))
         panel.center()
         panel.isReleasedWhenClosed = false
-        pinPanel = panel
+        panel.delegate = WindowDropper { [weak self, weak panel] in
+            guard let panel else { return }
+            self?.pinPanels.removeAll { $0 === panel }
+        }
+        pinPanels.append(panel)
         panel.orderFrontRegardless()
     }
 
@@ -383,12 +362,6 @@ final class AppCoordinator: ObservableObject {
             cardBody = String(localized: "다시 시도해주세요.")
             showResultCard()
         }
-    }
-
-    // MARK: - 파이프라인 구호환 (삭제 예정)
-    func runPipeline(area: CGRect, display: SCDisplay, pointSize: CGSize, image: NSImage?) async {
-        if let image { await runTranslate(img: image); return }
-        await captureAndRoute(area: area, display: display, pointSize: pointSize, action: .translate)
     }
 
     // MARK: - 결과 카드 (합의 레이아웃, 내용 맞춤 높이)

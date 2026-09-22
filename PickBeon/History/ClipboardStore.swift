@@ -50,6 +50,8 @@ final class ClipboardStore: ObservableObject {
         context.insert(r)
         items.insert(r, at: 0)
         enforceLimit(context: context)
+        // 자기복사 중복 방지: 우리 복사로 바뀐 페이스트보드를 폴링이 다시 add하지 않도록 동기화
+        lastChange = NSPasteboard.general.changeCount
         DebugLogger.shared.cache("히스토리 추가 \(items.count)개")
     }
     func enforceLimit(context: ModelContext) {

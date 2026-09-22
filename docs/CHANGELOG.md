@@ -1,4 +1,10 @@
 # CHANGELOG
+## v0.2.0-macos M2 (2026-09-22)
+- [macos] P1-1 captureAndRoute 중복 switch 제거 → 캡쳐 후 applyAction 단일 경로 호출
+- [macos] P1-2 runPipeline 데드코드 삭제 (호출자 없음 확인)
+- [macos] P1-3 자기복사 중복 방지: ClipboardStore.add에서 changeCount 동기화
+- [macos] P1-4 pinPanel 단일 → pinPanels 배열, 닫힌 패널 자동 제거
+- [macos] 로컬 git+bd 초기화 (베이스 커밋, M2 이슈 4건)
 ## v0.2.0-macos M1 (2026-09-20)
 - [macos] 결과카드 합의 레이아웃: 좌이미지/우OCR/하번역전체 + 자동높이 + 타이틀 PickBeon
 - [macos] 번역 bulk 유지 (단독검증: 6줄 전체 반환) + 표시부 lineLimit 제거
