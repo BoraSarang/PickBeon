@@ -18,13 +18,24 @@ public struct GitHubRelease: Codable, Sendable, Equatable {
 public enum ReleaseError: Error {
     case notConfigured
     case noPublishedRelease
+    /// 404 는 "존재하지 않음" 과 "권한 없음(private)" 이 구분되지 않는다.
+    /// 저장소가 private 인데 공개 API 로 조회하면 항상 이 값이 된다.
+    case repoNotAccessible
     case fetchFailed
     case badStatus(Int)
 }
 
 public enum ReleaseChecker {
-    /// GitHub 공개 저장소 "Owner/Repo" (미설정 시 확인 불가로 표시)
-    public static let repository = "borasarang/PickBeon"
+    /// GitHub 공개 저장소 "Owner/Repo". private 저장소는 공개 API 로 조회할 수 없어
+    /// 항상 repoNotAccessible 이 된다. 설정>업데이트 에서 변경 가능.
+    public static var repository: String {
+        get {
+            let saved = UserDefaults.standard.string(forKey: "updateRepoSlug") ?? ""
+            return saved.isEmpty ? defaultRepository : saved
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "updateRepoSlug") }
+    }
+    public static let defaultRepository = "BoraSarang/PickBeon"
 
     public static var isConfigured: Bool { !repository.isEmpty && repository.contains("/") }
 
@@ -43,7 +54,8 @@ public enum ReleaseChecker {
             throw ReleaseError.fetchFailed
         }
         guard let http = response as? HTTPURLResponse else { throw ReleaseError.fetchFailed }
-        if http.statusCode == 404 { throw ReleaseError.noPublishedRelease }
+        // 404: 미존재 / 비공개(private) / 릴리스 없음 — 셋을 구분할 수 없다.
+        if http.statusCode == 404 || http.statusCode == 403 { throw ReleaseError.repoNotAccessible }
         guard (200...299).contains(http.statusCode) else { throw ReleaseError.badStatus(http.statusCode) }
         return try JSONDecoder().decode(GitHubRelease.self, from: data)
     }

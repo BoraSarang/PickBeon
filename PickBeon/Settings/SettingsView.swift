@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var confirmReset = false
     /// 초기화 후 UI 를 강제로 다시 그리기 위한 트리거
     @State private var resetNonce = 0
+    /// 업데이트 확인 대상 저장소 (기본값 = ReleaseChecker.defaultRepository)
+    @State private var repoSlug = ReleaseChecker.repository
 
     private let navs: [(Int, String, String)] = [
         (0, "scissors", "캡쳐"),
@@ -206,6 +208,13 @@ struct SettingsView: View {
                 }
             } else if sel == 5 {
                 SHead(String(localized: "업데이트"), String(localized: "GitHub Releases에서 새 버전을 확인합니다."))
+                SCard(String(localized: "저장소"), String(localized: "공개 저장소만 조회됩니다 (비공개면 확인 불가)")) {
+                    TextField("Owner/Repo", text: $repoSlug)
+                        .textFieldStyle(.roundedBorder)
+                        .font(Theme.font(11.5, mono: true))
+                        .frame(width: 150)
+                        .onSubmit { ReleaseChecker.repository = repoSlug }
+                }
                 SCard(String(localized: "현재 버전"), "PickBeon \(ReleaseChecker.currentVersion)") {
                     Text(ReleaseChecker.currentVersion)
                         .font(Theme.font(12, weight: .semibold, mono: true))
@@ -235,6 +244,7 @@ struct SettingsView: View {
                 }
                 HStack(spacing: 10) {
                     Button {
+                        ReleaseChecker.repository = repoSlug
                         Task { await uc.checkForUpdate() }
                     } label: {
                         if case .checking = uc.state {
