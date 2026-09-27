@@ -16,7 +16,11 @@
 - 없음. budgets.json 기본값 사용 (Cold Start ≤1.5s, 메모리 ≤300MB, 60fps)
 
 ## 4. 프로젝트 특화 예외 규칙
-- 최소 macOS 15+. Translation 폴백 없음
+- 최소 **macOS 26+** (2026-09-27 상향). `TranslationSession` 독립 생성 API
+  (`init(installedSource:target:)`) 가 macOS 26.0+ 전용이라, 그 이전에서는 SwiftUI
+  `View.translationTask` 안에서만 세션을 얻을 수 있어 차별화 축(온디바이스 번역)이 성립하지 않는다.
+  SwiftPM `Platform` 열거형이 `.v25` 까지만 제공하므로 `Package.swift` 는 `.macOS("26.0")` 문자열 초기자를 쓴다.
+- 번역 폴백 없음 (min 26 이므로 게이트 자체가 불필요)
 - 번역 엔진 MVP는 Apple Translation만. BYOK 자리만 예약, P1 이후 재검토
 - 클립보드 저장 기본 20개, 옵션 20/50/100/200/제한없음. 텍스트·이미지·암호화 토글
 - 캡쳐 엔진 ScreenCaptureKit 필수. CGWindowListCreateImage 금지

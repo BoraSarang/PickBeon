@@ -833,13 +833,28 @@ final class AppCoordinator: ObservableObject {
         // 선택 영역 위 중앙 → 없으면 화면 상단 안쪽 (menu bar 아래 여백 확보)
         let target = screenForCapture() ?? NSScreen.main
         if let f = target?.visibleFrame, lastArea != .zero, let sf = target?.frame {
-            let areaTopY = sf.maxY - lastArea.minY // Cocoa: 영역 위쪽
-            let x = sf.minX + lastArea.midX - 130
-            var y = areaTopY + 14
-            if y + 52 > f.maxY { y = f.maxY - 52 - 12 }
-            y = max(f.minY + 12, y)
-            let clampedX = max(f.minX + 12, min(x, f.maxX - 260 - 12))
-            panel.setFrameOrigin(NSPoint(x: clampedX, y: y))
+            let w = panel.frame.width > 1 ? panel.frame.width : 260
+            let h = panel.frame.height > 1 ? panel.frame.height : 52
+            let gap: CGFloat = 14
+            // lastArea 는 top-left 이므로 Cocoa y 로 변환:  영역 위쪽 = sf.maxY - lastArea.minY
+            let areaTopY = sf.maxY - lastArea.minY
+            let areaBottomY = sf.maxY - lastArea.maxY
+
+            // [FIX] 위 공간이 없으면 화면 상단으로 clamp 해 선택 영역 안쪽에 겹쳐 그렸던 것을,
+            // 선택 영역 아래(외부)로 넘긴다. 툴바와 동일한 규칙.
+            let above = areaTopY + gap
+            let below = areaBottomY - h - gap
+            let y: CGFloat
+            if above + h <= f.maxY {
+                y = above
+            } else if below >= f.minY {
+                y = below
+            } else {
+                y = max(f.minY, min(above, f.maxY - h))
+            }
+            var x = sf.minX + lastArea.midX - w / 2
+            x = max(f.minX + 12, min(x, f.maxX - w - 12))
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
         } else if let f = target?.visibleFrame {
             panel.setFrameOrigin(NSPoint(x: f.midX - 130, y: f.maxY - 52 - 16))
         } else { panel.center() }

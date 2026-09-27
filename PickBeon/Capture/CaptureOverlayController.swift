@@ -390,16 +390,10 @@ final class CaptureOverlayController {
             toolbar.orderOut(nil)
             return
         }
-        toolbar.setContentSize(toolbarSize)
         // GIF: 영역 선택 후 '녹화' 툴바 (프리즈 유무와 무관)
         if gifMode, gifReady, let r = overlay.sel, r.width > 10, r.height > 10 {
             hintbar.orderOut(nil)
-            var x = window.frame.origin.x + r.midX - toolbarSize.width / 2
-            var y = window.frame.origin.y + r.minY - toolbarSize.height - 12
-            x = max(screen.frame.minX + 8, min(x, screen.frame.maxX - toolbarSize.width - 8))
-            y = max(screen.frame.minY + 8, min(y, screen.frame.maxY - toolbarSize.height - 8))
-            toolbar.setFrameOrigin(NSPoint(x: x, y: y))
-            toolbar.orderFrontRegardless()
+            placeToolbar(for: r)
             return
         }
         // A2 quickCopy: 프리즈 직후 ocrCopy 수행 — 툴바 노출 금지
@@ -411,12 +405,7 @@ final class CaptureOverlayController {
         if frozenImage != nil,
            let r = overlay.sel, r.width > 10, r.height > 10 {
             hintbar.orderOut(nil)
-            var x = window.frame.origin.x + r.midX - toolbarSize.width / 2
-            var y = window.frame.origin.y + r.minY - toolbarSize.height - 12
-            x = max(screen.frame.minX + 8, min(x, screen.frame.maxX - toolbarSize.width - 8))
-            y = max(screen.frame.minY + 8, min(y, screen.frame.maxY - toolbarSize.height - 8))
-            toolbar.setFrameOrigin(NSPoint(x: x, y: y))
-            toolbar.orderFrontRegardless()
+            placeToolbar(for: r)
         } else if overlay.sel != nil {
             hintbar.orderOut(nil)
             toolbar.orderOut(nil)
@@ -424,6 +413,50 @@ final class CaptureOverlayController {
             toolbar.orderOut(nil)
             hintbar.orderFrontRegardless()
         }
+    }
+
+    /// [FIX] 툴바 배치 두 가지 결함 수정:
+    ///  1) 중앙 정렬이 어긋남 — 가로 위치 계산에 하드코딩 `toolbarSize.width`(420)를 썼지만
+    ///     실제 패널 너비는 SwiftUI 콘텐츠 크기(~320)였다. (420-320)/2 만큼 왼쪽으로 밀렸다.
+    ///     → 패널 크기를 호스팅 뷰의 fittingSize 로 확정하고 그 값으로 중앙 정렬.
+    ///  2) 선택 영역이 화면 하단에 닿으면 아래 공간이 없어, 아래 배치를 화면 바닥으로 clamp 해
+    ///     **선택 영역 안쪽**에 겹쳐 그렸다. → 공간이 없으면 선택 영역 **위(외부)** 로 넘긴다.
+    private func placeToolbar(for selRect: CGRect) {
+        toolbarHost?.view.layoutSubtreeIfNeeded()
+        let fit = toolbarHost?.view.fittingSize ?? .zero
+        let w = fit.width > 1 ? fit.width : toolbarSize.width
+        let h = fit.height > 1 ? fit.height : toolbarSize.height
+        if abs(toolbar.frame.width - w) > 0.5 || abs(toolbar.frame.height - h) > 0.5 {
+            toolbar.setContentSize(NSSize(width: w, height: h))
+        }
+        toolbar.layoutIfNeeded()
+        // 배치는 방금 설정한 "실제 패널 frame" 으로 계산한다. (계산용 너비와 패널 너비가 다르면 다시 어긋난다)
+        let pw = toolbar.frame.width > 1 ? toolbar.frame.width : w
+        let ph = toolbar.frame.height > 1 ? toolbar.frame.height : h
+
+        let gap: CGFloat = 12
+        let margin: CGFloat = 8
+        let sf = screen.frame
+
+        // 가로 — 선택 영역 중앙 (실제 패널 너비 기준)
+        var x = window.frame.origin.x + selRect.midX - pw / 2
+        x = max(sf.minX + margin, min(x, sf.maxX - pw - margin))
+
+        // 세로 — 아래 우선, 안 되면 위(선택 영역 외부), 그래도 안 되면 화면 안으로 clamp
+        let below = selRect.minY - ph - gap
+        let above = selRect.maxY + gap
+        let y: CGFloat
+        let mode: String
+        if below >= sf.minY + margin {
+            y = below; mode = "below"
+        } else if above + ph <= sf.maxY - margin {
+            y = above; mode = "above"
+        } else {
+            y = max(sf.minY + margin, min(below, sf.maxY - ph - margin)); mode = "clamp"
+        }
+        toolbar.setFrameOrigin(NSPoint(x: x, y: y))
+        toolbar.orderFrontRegardless()
+        FileLog.log("툴바 배치 sel=\(selRect) panel=\(Int(pw))x\(Int(ph)) pos=\(String(format:"%.0f,%.0f", x, y)) mode=\(mode)")
     }
 }
 
@@ -718,10 +751,27 @@ final class OverlayView: NSView {
     }
 
     private func pill(_ text: String, at r: CGRect, color: NSColor? = nil) {
-        drawPill(text, origin: NSPoint(x: r.midX, y: max(8, r.minY - 26)), centered: true, color: color)
+        // 아래(선택 영역 하단 밑)에 두고, 공간이 없으면 위(외부)로 넘긴다.
+        // 과거엔 max(8, …) 하드 클램프로 화면 바닥에 붙여 선택 영역 안쪽에 겹쳐 그렸다.
+        let h: CGFloat = 20
+        let gap: CGFloat = 6
+        let below = r.minY - h - gap
+        let originY: CGFloat
+        if below >= bounds.minY + 4 {
+            originY = below
+        } else {
+            originY = min(r.maxY + gap, bounds.maxY - h)
+        }
+        drawPill(text, origin: NSPoint(x: r.midX, y: originY), centered: true, color: color)
     }
+
     private func pillAtTop(_ text: String, at r: CGRect) {
-        drawPill(text, origin: NSPoint(x: r.midX, y: r.maxY + 8), centered: true, color: nil)
+        // 선택 영역 위쪽 고정. 위 공간이 없으면 아래로 넘긴다.
+        let h: CGFloat = 20
+        let gap: CGFloat = 6
+        let above = r.maxY + gap
+        let originY: CGFloat = (above + h <= bounds.maxY - 4) ? above : max(bounds.minY + 4, r.minY - h - gap)
+        drawPill(text, origin: NSPoint(x: r.midX, y: originY), centered: true, color: nil)
     }
     private func drawPill(_ text: String, origin: NSPoint, centered: Bool, color: NSColor?) {
         let label = text as NSString

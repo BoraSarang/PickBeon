@@ -4,14 +4,14 @@ import Translation
 // 번역 엔진: Apple Translation만 (MVP). BYOK 자리 예약.
 // TranslationSession 블로킹 대비: timeout은 withThrowingTaskGroup으로 격리. 메인은 절대 안 막음.
 //
-// [P0-1] SDK 감사 결과(Apple Swift 6.4 / macOS 27 SDK):
-//   - TranslationSession 의 public init 은 `installedSource:target:` (macOS 26.0+) 두 개뿐.
-//     → 앱처럼 백그라운드 파이프라인에서 세션을 직접 만들려면 macOS 26+ 가 필수.
-//   - macOS 15 에서 세션을 얻는 유일한 경로는 SwiftUI `View.translationTask` (macOS 15.0+)
-//     로, View 계층 안에서만 동작한다.
-//   즉 `#available(macOS 26, *)` 게이트 자체는 불가피했으나, 과거 else 분기의
-//   `return text` 가 "원문을 번역인 것처럼 성공"시켜差异化 기능이 통짜로 no-op 이었다.
-// → 게이트는 유지하되 미지원 경로를 반드시 에러로 만든다(조용한 성공 금지).
+// [P0-1 / 2026-09-27] 최소 버전을 macOS 26 으로 올렸다. 근거:
+//   - TranslationSession 의 public init 은 `installedSource:target:` (macOS 26.0+) 두 개뿐이다.
+//     앱처럼 백그라운드 파이프라인에서 세션을 직접 만들려면 26+ 가 필수.
+//   - macOS 15 에서 세션을 얻는 유일한 경로는 SwiftUI `View.translationTask` (15.0+) 로,
+//     View 계층 안에서만 동작한다.
+//   과거엔 게이트의 else 분기가 원문을 "번역 성공"으로 반환해差异化 기능이
+//   최소 지원 OS 전 구간에서 통짜로 no-op 이었다. 이제 대상 OS 가 26+ 이므로
+//   게이트는 불필요해 제거했다.
 @MainActor
 final class TranslationService: ObservableObject {
     @Published var result: String = ""
@@ -19,17 +19,8 @@ final class TranslationService: ObservableObject {
 
     private static let timeoutNs: UInt64 = 30_000_000_000
 
-    /// 독립 세션 생성(백그라운드 파이프라인) 가능 여부. macOS 26+ 에서만 true.
-    /// macOS 15~25 는 SwiftUI translationTask 경로가 필요하며 TODO-백로그다.
-    static var isStandaloneSessionSupported: Bool {
-        if #available(macOS 26, *) { return true }
-        return false
-    }
-
-    /// UI 게이팅용. 미지원이면 번역 진입점을 비활성화하고 사유를 노출한다.
-    static var unsupportedReason: String? {
-        isStandaloneSessionSupported ? nil : String(localized: "이 macOS 버전에서는 번역을 사용할 수 없습니다 (macOS 26 이상 필요)")
-    }
+    /// 최소 macOS 26 이므로 독립 세션 생성은 항상 가능하다.
+    static var isStandaloneSessionSupported: Bool { true }
 
     func translate(_ text: String, polite: Bool) async throws -> String {
         FileLog.log("번역 시작: \(text.prefix(30))")
@@ -65,14 +56,6 @@ final class TranslationService: ObservableObject {
     }
 
     private static func doTranslate(text: String, targetID: String) async throws -> String {
-        guard #available(macOS 26, *) else {
-            // [P0-1] 과거엔 여기서 원문을 반환해 '번역 성공'으로 위장했다. 반드시 실패시킨다.
-            FileLog.log("번역 미지원 버전 — 원문 반환 금지, 에러 처리")
-            throw PickBeonError.trans(
-                "이 macOS 버전에서는 번역을 사용할 수 없습니다 (macOS 26 이상 필요)",
-                code: "E-MAC-TRANS-0002"
-            )
-        }
         let target = Locale.Language(identifier: targetID)
         // 소스는 대상 언어 반대편으로 가정 (ko↔en 전제). 자동 감지로 전환은 P1 백로그.
         let sourceID = targetID == "ko" ? "en" : "ko"

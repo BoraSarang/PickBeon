@@ -165,7 +165,7 @@ struct SettingsView: View {
                 SCard(String(localized: "정중한 말투"), String(localized: "끄면 반말에 가깝게")) {
                     Toggle("", isOn: $s.politeTone).labelsHidden().tint(Theme.accent)
                 }
-                Text(String(localized: "엔진: Apple Translation (온디바이스). BYOK는 추후 재검토."))
+                Text(String(localized: "엔진: Apple Translation (온디바이스, macOS 26+). BYOK는 추후 재검토."))
                     .font(Theme.font(11.5))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 4)
