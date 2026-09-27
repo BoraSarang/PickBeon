@@ -17,3 +17,5 @@
 {"id":"int-69fc29cfd0cbbb97c533214664f261f7","kind":"field_change","created_at":"2026-09-24T10:33:58.544423Z","actor":"lee","issue_id":"pickbeon-2sp","extra":{"field":"status","new_value":"open","old_value":"closed"}}
 {"id":"int-73b9ebb039368cae42600476878fec59","kind":"field_change","created_at":"2026-09-27T15:05:22.818931Z","actor":"lee","issue_id":"pickbeon-087","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-280721cf972dacf0d85ba8fe28ad7840","kind":"field_change","created_at":"2026-09-27T15:05:23.577879Z","actor":"lee","issue_id":"pickbeon-dt7","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-ebc2a8d728c3d324c96ea55b56e42b41","kind":"field_change","created_at":"2026-09-27T15:13:44.657043Z","actor":"lee","issue_id":"pickbeon-6pm","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-cfb410def2c4c5876fb574715ecccb41","kind":"field_change","created_at":"2026-09-27T15:13:45.281493Z","actor":"lee","issue_id":"pickbeon-mkq","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}

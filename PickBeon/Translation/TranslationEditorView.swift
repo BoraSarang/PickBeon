@@ -3,7 +3,7 @@ import AppKit
 import CoreImage
 
 // 에디터: 좌 이미지(OCR박스+번역오버레이+주석) / 우 OCR·번역+말투토글. 캡쳐 후에만 열림.
-enum AnnotTool { case browse, pen, arrow, rect, text, blur, mosaic }
+enum AnnotTool { case browse, pan, pen, arrow, rect, text, blur, mosaic }
 enum AnnotKind: Equatable { case pen, arrow, rect, note, blur, mosaic }
 
 struct Annotation: Identifiable, Equatable {
@@ -11,6 +11,31 @@ struct Annotation: Identifiable, Equatable {
     var kind: AnnotKind
     var points: [CGPoint] // 정규화 top-left 좌표. pen=경로, arrow/rect/blur/mosaic=[시작,끝], note=[앵커]
     var text: String = ""
+
+    /// 히트 테스트용 정규화 경계 ( pen 은 경로 전체, 나머지는 시작~끝 ).
+    var bounds: CGRect {
+        switch kind {
+        case .note:
+            return CGRect(x: (points.first?.x ?? 0) - 0.02,
+                          y: (points.first?.y ?? 0) - 0.02,
+                          width: 0.16, height: 0.06)
+        case .pen:
+            guard let minX = points.map(\.x).min(), let minY = points.map(\.y).min(),
+                  let maxX = points.map(\.x).max(), let maxY = points.map(\.y).max() else { return .null }
+            // 스트로크가 얇으므로 최소 히트 영역을 준다
+            return CGRect(x: minX - 0.01, y: minY - 0.01,
+                          width: max(maxX - minX, 0) + 0.02, height: max(maxY - minY, 0) + 0.02)
+        default:
+            guard points.count >= 2 else {
+                let p = points.first ?? .zero
+                return CGRect(x: p.x - 0.01, y: p.y - 0.01, width: 0.02, height: 0.02)
+            }
+            let x0 = min(points[0].x, points[1].x), y0 = min(points[0].y, points[1].y)
+            return CGRect(x: x0 - 0.008, y: y0 - 0.008,
+                          width: abs(points[1].x - points[0].x) + 0.016,
+                          height: abs(points[1].y - points[0].y) + 0.016)
+        }
+    }
 }
 
 // aspect-fit 매핑: 화면 픽셀 ↔ 이미지 정규화 좌표
@@ -36,9 +61,12 @@ struct TranslationEditorView: View {
     @ObservedObject var ocr: OCRService
     @ObservedObject var translator: TranslationService
     @ObservedObject var coordinator: AppCoordinator
-    @State private var selected: UUID?
-    @AppStorage("overlayOn") private var showBoxes = true
-    @AppStorage("transOverlayOn") private var showTransOverlay = false
+    @State private var selected: UUID?            // 선택된 OCR 줄
+    @State private var selectedAnnotation: UUID?  // 선택된 주석 (개별 편집·삭제)
+    /// 툴바 토글은 "이 창에서만" 적용한다. 이전엔 @AppStorage 라 에디터에서 바꾸면
+    /// 전역 기본값(설정·메뉴)까지 함께 바뀌었다.
+    @State private var showBoxes: Bool = AppSettings.shared.overlayOn
+    @State private var showTransOverlay: Bool = AppSettings.shared.transOverlayOn
     @AppStorage("politeTone") private var politeTone = true
     @State private var tab = 1
     @State private var tool: AnnotTool = .browse
@@ -51,9 +79,24 @@ struct TranslationEditorView: View {
     /// [P0-3] 주석 id → 감열 렌더 결과. body 가 여러 번 평가돼도 CoreImage 를 다시 돌리지 않는다.
     @State private var redactCache: [UUID: Redactor.Output] = [:]
 
+    /// [P1 pickbeon-zpy] Undo/Redo + 줌/팬
+    @StateObject private var history = HistoryStack<[Annotation]>([])
+    @State private var zoom: CGFloat = 1.0
+    @State private var panOffset: CGSize = .zero
+    @State private var spaceHeld = false
+    @State private var fitting = true
+
+    private let zoomRange: ClosedRange<CGFloat> = 0.1...8
+
+    /// 그리기가 가능한 상태 (탐색/패닝 중이 아닐 때)
+    private var drawingEnabled: Bool { tool != .browse && tool != .pan }
+    private var isPanning: Bool { tool == .pan || spaceHeld }
+
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            Rectangle().fill(Theme.line).frame(height: 1)
+            zoomBar
             Rectangle().fill(Theme.line).frame(height: 1)
             HStack(spacing: 0) {
                 imagePane.frame(minWidth: 420)
@@ -65,7 +108,129 @@ struct TranslationEditorView: View {
         .background(Theme.bg)
         .onChange(of: annotations) { _, _ in rebuildRedactCache() }
         .onChange(of: image) { _, _ in rebuildRedactCache() }
-        .onAppear { rebuildRedactCache() }
+        .onAppear {
+            rebuildRedactCache()
+            history.reset(to: annotations)
+        }
+        .background(keyCommandMonitor)
+        .onExitCommand {
+            // esc 는 창을 닫는 게 아니라 "선택 해제" 로 쓰인다 (창 닫기는 기본 동작 유지)
+            if selectedAnnotation != nil { selectedAnnotation = nil }
+            else if pendingNote != nil { pendingNote = nil; pendingText = "" }
+            else { NSApp.keyWindow?.performClose(nil) }
+        }
+    }
+
+    // MARK: - 줌/팬
+
+    private var zoomBar: some View {
+        HStack(spacing: 8) {
+            ZoomButton(systemName: "minus.magnifyingglass", tip: "축소 (⌘-)") {
+                setZoom(zoom / 1.25)
+            }
+            Text("\(Int((zoom * 100).rounded()))%")
+                .font(Theme.font(11, weight: .semibold, mono: true))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: 46)
+                .onTapGesture { setZoom(1.0); panOffset = .zero }
+                .help("클릭하면 100% · 더블클릭하면 화면 맞춤")
+            ZoomButton(systemName: "plus.magnifyingglass", tip: "확대 (⌘+)") {
+                setZoom(zoom * 1.25)
+            }
+            Rectangle().fill(Theme.line).frame(width: 1, height: 14)
+            Text(zoomText)
+                .font(Theme.font(10.5))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            if spaceHeld {
+                Label("Space — 이동 중", systemImage: "hand.draw")
+                    .font(Theme.font(10.5, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+            }
+            if let a = selectedAnnotation.flatMap({ id in annotations.first { $0.id == id } }) {
+                HStack(spacing: 6) {
+                    Text(annotationName(a.kind))
+                        .font(Theme.font(10.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Button {
+                        deleteAnnotation(a.id)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.danger)
+                    }
+                    .buttonStyle(.plain)
+                    .help("선택한 주석 삭제 (⌫)")
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(Theme.surface2.opacity(0.5))
+    }
+
+    private var zoomText: String {
+        if isPanning { return "" }
+        if tool == .browse { return "주석을 누르면 선택 · ⌫ 삭제" }
+        return "⌘+드래그 = 확대/축소 · Space+드래그 = 이동 · ⌘0 = 100%"
+    }
+
+    private func setZoom(_ value: CGFloat) {
+        fitting = false
+        zoom = min(max(value, zoomRange.lowerBound), zoomRange.upperBound)
+    }
+
+    private func zoomToFit() {
+        zoom = 1.0
+        panOffset = .zero
+        fitting = true
+    }
+
+    /// 정규화 좌표 → 화면(줌/팬 반영) 좌표 히트 테스트
+    private func annotation(at point: CGPoint) -> Annotation? {
+        // 나중에 그린 것이 위에 오므로 역순 탐색
+        annotations.reversed().first { $0.bounds.contains(point) }
+    }
+
+    private func annotationName(_ kind: AnnotKind) -> String {
+        switch kind {
+        case .pen: return String(localized: "펜")
+        case .arrow: return String(localized: "화살표")
+        case .rect: return String(localized: "박스")
+        case .note: return String(localized: "텍스트")
+        case .blur: return String(localized: "블러")
+        case .mosaic: return String(localized: "모자이크")
+        }
+    }
+
+    // MARK: - 주석 변경 (전부 이력 경유)
+
+    private func appendAnnotation(_ a: Annotation) {
+        history.checkpoint()
+        annotations.append(a)
+    }
+
+    private func deleteAnnotation(_ id: UUID) {
+        guard let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
+        history.checkpoint()
+        annotations.remove(at: idx)
+        if selectedAnnotation == id { selectedAnnotation = nil }
+    }
+
+    private func clearAnnotations() {
+        guard !annotations.isEmpty else { return }
+        history.checkpoint()
+        annotations.removeAll()
+        selectedAnnotation = nil
+    }
+
+    private func undo() {
+        annotations = history.undo()
+        if let id = selectedAnnotation, !annotations.contains(where: { $0.id == id }) { selectedAnnotation = nil }
+    }
+
+    private func redo() {
+        annotations = history.redo()
     }
 
     /// 감열 주석의 렌더 결과를 한 번만 계산해 캐시한다.
@@ -91,17 +256,20 @@ struct TranslationEditorView: View {
     private var toolbar: some View {
         HStack(spacing: 4) {
             IconToolButton(systemName: "cursorarrow", tip: String(localized: "선택"), active: tool == .browse) { tool = .browse }
+            IconToolButton(systemName: "hand.draw", tip: String(localized: "이동 (Space)"), active: tool == .pan) { toggleTool(.pan) }
             IconToolButton(systemName: "pencil.tip", tip: String(localized: "펜"), active: tool == .pen) { toggleTool(.pen) }
             IconToolButton(systemName: "arrow.up.right", tip: String(localized: "화살표"), active: tool == .arrow) { toggleTool(.arrow) }
             IconToolButton(systemName: "rectangle", tip: String(localized: "박스"), active: tool == .rect) { toggleTool(.rect) }
             IconToolButton(systemName: "drop.halffull", tip: String(localized: "블러"), active: tool == .blur) { toggleTool(.blur) }
             IconToolButton(systemName: "checkerboard.rectangle", tip: String(localized: "모자이크"), active: tool == .mosaic) { toggleTool(.mosaic) }
-            IconToolButton(systemName: "textformat", tip: String(localized: "텍스트 (탭して 입력)"), active: tool == .text) { toggleTool(.text) }
+            IconToolButton(systemName: "textformat", tip: String(localized: "텍스트 (탭해서 입력)"), active: tool == .text) { toggleTool(.text) }
             Rectangle().fill(Theme.line).frame(width: 1, height: 18).padding(.horizontal, 4)
             IconToolButton(systemName: "square.dashed", tip: String(localized: "OCR 박스 표시"), active: showBoxes) { showBoxes.toggle() }
             IconToolButton(systemName: "character.bubble", tip: String(localized: "번역 오버레이"), active: showTransOverlay) { showTransOverlay.toggle() }
-            IconToolButton(systemName: "arrow.uturn.backward", tip: String(localized: "실행 취소"), enabled: !annotations.isEmpty) { _ = annotations.popLast() }
-            IconToolButton(systemName: "trash", tip: String(localized: "주석 지우기"), enabled: !annotations.isEmpty) { annotations.removeAll() }
+            Rectangle().fill(Theme.line).frame(width: 1, height: 18).padding(.horizontal, 4)
+            IconToolButton(systemName: "arrow.uturn.backward", tip: String(localized: "실행 취소 (⌘Z)"), enabled: history.canUndo) { undo() }
+            IconToolButton(systemName: "arrow.uturn.forward", tip: String(localized: "다시 실행 (⇧⌘Z)"), enabled: history.canRedo) { redo() }
+            IconToolButton(systemName: "trash", tip: String(localized: "주석 지우기"), enabled: !annotations.isEmpty) { clearAnnotations() }
             Spacer()
             // [P0-2] 복사가 무엇을 담았는지 명시 (텍스트만인지, 주석 포함 합성인지)
             if let toast = coordinator.copyToast {
@@ -140,12 +308,48 @@ struct TranslationEditorView: View {
         .animation(Theme.hoverFade, value: coordinator.copyToast)
     }
 
+    // MARK: - 키보드 단축키 (에디터)
+    //
+    // SwiftUI `.commands` 는 Scene 에 붙는 modifier 라, NSWindow + NSHostingController 로
+    // 띄우는 이 창에서는 동작하지 않는다. 로컬 NSEvent 모니터로 처리한다.
+    private var keyCommandMonitor: some View {
+        KeyCommandMonitor { event in
+            let cmd = event.modifierFlags.contains(.command)
+            switch event.keyCode {
+            case 53:                                    // esc
+                spaceHeld = false
+                if selectedAnnotation != nil { selectedAnnotation = nil }
+                else if pendingNote != nil { pendingNote = nil; pendingText = "" }
+                else { NSApp.keyWindow?.performClose(nil) }
+            case 51 where selectedAnnotation != nil:    // delete (⌫)
+                if let id = selectedAnnotation { deleteAnnotation(id) }
+            case 7 where cmd:                          // Z
+                if event.modifierFlags.contains(.shift) { redo() } else { undo() }
+            case 24 where cmd, 69 where cmd:            // + / =  → 확대
+                setZoom(zoom * 1.25)
+            case 27 where cmd, 78 where cmd:            // - / _  → 축소
+                setZoom(zoom / 1.25)
+            case 29 where cmd:                         // 0 → 100% / 화면 맞춤
+                if zoom <= 1.001 && panOffset == .zero { setZoom(2.0) } else { zoomToFit() }
+            case 49:                                   // space
+                spaceHeld = true
+            default:
+                return false
+            }
+            return true
+        }
+        .frame(width: 0, height: 0)
+    }
+
     private func toggleTool(_ t: AnnotTool) {
         tool = (tool == t) ? .browse : t
         if tool != .text { pendingNote = nil }
     }
 
     // MARK: - 이미지 영역
+    // [P1 pickbeon-zpy] 줌/팬 도입. 4K 캡쳐를 100% 로만 볼 수 없어 주석 작업이 불가능했다
+    // (Shottr / CleanShot / Gifox 모두 지원).
+    // scaleEffect 는 렌더링만 바꾸고 자식 제스처의 좌표계는 그대로라 정규화 좌표가 유지된다.
     private var imagePane: some View {
         ZStack {
             if let img = image {
@@ -157,16 +361,63 @@ struct TranslationEditorView: View {
                         if showBoxes { boxesLayer(map) }
                         if showTransOverlay { overlayLayer(map) }
                         annotLayer(map)
+                        if let a = annotations.first(where: { $0.id == selectedAnnotation }) {
+                            selectionHalo(a, map: map)
+                        }
                         if let d = draft, d.count >= 1 { draftLayer(map, d) }
-                        // 제스처 수신층 (선택 모드에서는 투명 통과 → 박스 탭 살아있음)
+                        // 제스처 수신층
                         Color.clear.contentShape(Rectangle())
                             .gesture(drawGesture(map))
-                            .allowsHitTesting(tool != .browse)
+                            .allowsHitTesting(drawingEnabled && !isPanning)
                         if let anchor = pendingNote { noteField(map, anchor) }
-                    }.frame(width: geo.size.width, height: geo.size.height)
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .scaleEffect(zoom)
+                    .offset(panOffset)
+                    .clipped()
+                    .contentShape(Rectangle())
+                    // 탐색 모드: 주석 탭으로 개별 선택
+                    .onTapGesture { location in
+                        guard tool == .browse, !isPanning else { return }
+                        let n = map.unpoint(location)
+                        if let hit = annotation(at: n) { selectedAnnotation = hit.id }
+                        else { selectedAnnotation = nil }
+                    }
+                    .gesture(panGesture)
+                    .gesture(magnifyGesture)
                 }
             } else { Theme.surface2 }
         }
+    }
+
+    /// 선택된 주석 강조 (경계 테두리)
+    private func selectionHalo(_ a: Annotation, map: FitMap) -> some View {
+        let b = map.rect(a.bounds)
+        return RoundedRectangle(cornerRadius: 3)
+            .stroke(Theme.warn, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+            .frame(width: max(b.width, 6), height: max(b.height, 6))
+            .position(x: b.midX, y: b.midY)
+            .allowsHitTesting(false)
+    }
+
+    /// 패닝: 손 도구 또는 Space 유지 중
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { v in
+                guard tool == .pan || spaceHeld else { return }
+                fitting = false
+                panOffset = CGSize(width: panOffset.width + v.translation.width,
+                                   height: panOffset.height + v.translation.height)
+            }
+    }
+
+    /// ⌘ + 세로 드래그 = 확대/축소 (트랙패드/휠 대체)
+    private var magnifyGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { v in
+                guard NSEvent.modifierFlags.contains(.command) else { return }
+                setZoom(zoom + (-v.translation.height / 220))
+            }
     }
 
     private func boxesLayer(_ map: FitMap) -> some View {
@@ -336,7 +587,7 @@ struct TranslationEditorView: View {
                     if draft == nil { draft = [p, p] } else if draft!.count >= 2 { draft?[1] = p }
                 case .text:
                     break
-                case .browse:
+                case .browse, .pan:
                     break
                 }
             }
@@ -344,7 +595,10 @@ struct TranslationEditorView: View {
                 let p = map.unpoint(v.location)
                 switch tool {
                 case .pen:
-                    if var d = draft, d.count >= 2 { d.append(p); annotations.append(Annotation(kind: .pen, points: d)) }
+                    if var d = draft, d.count >= 2 {
+                        d.append(p)
+                        appendAnnotation(Annotation(kind: .pen, points: d))
+                    }
                     draft = nil
                 case .arrow, .rect, .blur, .mosaic:
                     if let d = draft, d.count >= 2 {
@@ -356,7 +610,9 @@ struct TranslationEditorView: View {
                         default: kind = .rect
                         }
                         if hypot(d[1].x - d[0].x, d[1].y - d[0].y) > 0.005 {
-                            annotations.append(Annotation(kind: kind, points: [d[0], p]))
+                            let a = Annotation(kind: kind, points: [d[0], p])
+                            appendAnnotation(a)
+                            selectedAnnotation = a.id
                         }
                     }
                     draft = nil
@@ -379,7 +635,11 @@ struct TranslationEditorView: View {
             .position(x: cx, y: px.y)
             .onSubmit {
                 let t = pendingText.trimmingCharacters(in: .whitespaces)
-                if !t.isEmpty { annotations.append(Annotation(kind: .note, points: [anchor], text: t)) }
+                if !t.isEmpty {
+                    let a = Annotation(kind: .note, points: [anchor], text: t)
+                    appendAnnotation(a)
+                    selectedAnnotation = a.id
+                }
                 pendingNote = nil; pendingText = ""
             }
             .onExitCommand { pendingNote = nil; pendingText = "" }

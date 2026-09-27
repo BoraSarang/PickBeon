@@ -147,6 +147,28 @@ struct FooterButton: View {
     }
 }
 
+// MARK: - 줌 컨트롤 (에디터 줌바)
+struct ZoomButton: View {
+    let systemName: String
+    var tip: String = ""
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+                .frame(width: 22, height: 20)
+                .background(RoundedRectangle(cornerRadius: 5).fill(hovering ? Theme.rowHover : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(tip)
+    }
+}
+
 // MARK: - 상태 원 (결과카드 헤더 ✓/!)
 struct StatusDot: View {
     let symbol: String
