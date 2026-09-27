@@ -201,6 +201,12 @@ final class AppCoordinator: ObservableObject {
                             ctl.onGifRecord = { [weak ctl] in
                                 self.confirmGifRecord(controller: ctl)
                             }
+                            // [P0-6] 녹화 중 Esc = 실제 중지 (과거엔 오버레이만 닫고 녹화 지속).
+                            // HUD 의 local monitor 가 우선 소비하므로 이건 안전망이며,
+                            // GifRecorder.markStopped() 가 이중 호출을 막는다.
+                            ctl.onStopGif = {
+                                Task { @MainActor in await self.stopGifRecording() }
+                            }
                         }
                         if self.lastArea != .zero {
                             ctl.hasLastArea = true

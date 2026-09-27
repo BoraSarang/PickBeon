@@ -39,6 +39,9 @@ final class CaptureOverlayController {
     private(set) var gifRecording = false
     /// '녹화' 버튼 클릭 시 호출
     var onGifRecord: (() -> Void)?
+    /// [P0-6] 녹화 중 Esc → 실제 중지. 과거엔 onCancel(오버레이만 닫기)로 가서
+    /// 녹화가 계속되던 채 오버레이만 사라져 "멈춘 앱"처럼 보였다.
+    var onStopGif: (() -> Void)?
 
     private var window: KeyableWindow!
     private var overlay: OverlayView!
@@ -90,6 +93,7 @@ final class CaptureOverlayController {
         }
         overlay.onPrimary = { [weak self] in self?.perform(action: .translate) }
         overlay.onResizeCommit = { [weak self] rect in self?.recropAfterResize(rect) }
+        overlay.onStopGif = { [weak self] in self?.onStopGif?() }
         overlay.onWindowClick = { [weak self] p in
             guard let self, self.windowMode else { return }
             // 로컬 bottom-left → Cocoa 전역 → CG 전역 top-left
@@ -192,6 +196,7 @@ final class CaptureOverlayController {
     func close() {
         gifRecording = false
         gifReady = false
+        window.ignoresMouseEvents = false
         hintbar.orderOut(nil)
         toolbar.orderOut(nil)
         window.orderOut(nil)
@@ -247,7 +252,9 @@ final class CaptureOverlayController {
         FileLog.log("GIF 준비 완료 — 녹화 버튼 대기")
     }
 
-    /// GIF 녹화 시작: rect는 top-left → overlay.sel은 bottom-left. 툴바/힌트 숨김, 입력 차단, REC 표시.
+    /// GIF 녹화 시작: rect는 top-left → overlay.sel은 bottom-left. 툴바/힌트 숨김, REC 표시.
+    /// [P0-6] 녹화 중에는 오버레이가 마우스를 가로채지 않게 한다. GIF 는 "인터랙션을 담는" 기능이라
+    /// 다른 앱을 조작할 수 있어야 한다. (과거엔 screenSaver 레벨 오버레이가 클릭을 전부 삼켰다)
     func beginGifRecording(rect: CGRect) {
         gifRecording = true
         gifReady = false
@@ -263,18 +270,21 @@ final class CaptureOverlayController {
         overlay.needsDisplay = true
         hintbar.orderOut(nil)
         toolbar.orderOut(nil)
+        // 렌더는 유지하되 히트 테스트만 끈다 → REC 테두리 표시 + 마우스/클릭은 하단 앱으로 통과
+        window.ignoresMouseEvents = true
         if window.isVisible == false {
             window.makeKeyAndOrderFront(nil)
         }
-        FileLog.log("GIF REC 표시 TL=\(rect) → BL=\(String(describing: overlay.sel))")
+        FileLog.log("GIF REC 표시 TL=\(rect) → BL=\(String(describing: overlay.sel)) 마우스통과 ON")
     }
 
-    /// GIF 녹화 종료: REC 표시 해제 (오버레이 닫기는 AppCoordinator가 처리)
+    /// GIF 녹화 종료: REC 표시 해제 + 마우스 다시 차단 (오버레이 닫기는 AppCoordinator가 처리)
     func endGifRecording() {
         gifRecording = false
         gifReady = false
         overlay.recordingGIF = false
         overlay.gifElapsed = 0
+        window.ignoresMouseEvents = false
         overlay.needsDisplay = true
     }
 
@@ -294,7 +304,10 @@ final class CaptureOverlayController {
             return
         }
         guard rect.width > 10, rect.height > 10 else { return }
-        pendingTranslate = option
+        // [FIX] A2 텍스트 바로 복사 모드에서는 Option 을 무시한다. 이전엔 Option+드래그 시
+        // freeze() 가 .translate 로 먼저 실행되고 이어서 .ocrCopy 가 또 실행돼
+        // "번역 + 텍스트복사" 가 이중 실행됐다.
+        pendingTranslate = option && !quickCopyMode
         overlay.capturing = true
         gifReady = false
         overlay.needsDisplay = true
@@ -422,6 +435,8 @@ final class OverlayView: NSView {
     var onPrimary: (() -> Void)?
     var onResizeCommit: ((CGRect) -> Void)?
     var onWindowClick: ((CGPoint) -> Void)?
+    /// [P0-6] 녹화 중 Esc → 실제 중지 (컨트롤러의 onStopGif 로 전달)
+    var onStopGif: (() -> Void)?
     var sel: CGRect?
     var capturing = false
     var frozenImage: NSImage?
@@ -539,7 +554,8 @@ final class OverlayView: NSView {
 
     override func keyDown(with e: NSEvent) {
         if recordingGIF {
-            if e.keyCode == 53 { onCancel?() } // Esc는 코디네이터가 중지로 라우팅
+            // [P0-6] 녹화 중 Esc 는 중지. 오버레이만 닫으면 안 된다.
+            if e.keyCode == 53 { onStopGif?() }
             return
         }
         switch e.keyCode {
