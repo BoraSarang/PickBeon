@@ -114,11 +114,11 @@ final class UpdateCenter: ObservableObject {
             }
         } catch ReleaseError.noPublishedRelease {
             markChecked()
-            state = .unavailable(String(localized: "게시된 릴리스가 없습니다"))
+            state = .unavailable(String(localized: "게시된 릴리스가 없습니다 (첫 릴리스 발행 후 이 탭이 동작합니다)"))
         } catch ReleaseError.repoNotAccessible {
-            // private 저장소면 공개 API 가 항상 404/403 이다. 원인을 분명히 알린다.
+            // 비공개 저장소면 공개 API 가 항상 404/403 이다. 원인을 분명히 알린다.
             markChecked()
-            state = .unavailable(String(localized: "\(ReleaseChecker.repository) 저장소를 공개 API 로 읽을 수 없습니다 (비공개이거나 없음). 공개 저장소로 지정하거나 저장소를 공개하세요."))
+            state = .unavailable(String(localized: "\(ReleaseChecker.repository) 저장소를 공개 API 로 읽을 수 없습니다 (비공개이거나 없음)."))
         } catch ReleaseError.notConfigured {
             state = .unavailable(String(localized: "업데이트 리포지토리가 설정되지 않았습니다"))
         } catch {
