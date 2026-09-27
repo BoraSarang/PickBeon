@@ -541,7 +541,7 @@ final class AppCoordinator: ObservableObject {
         let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
         w.styleMask = [.titled, .closable, .resizable]
         w.title = String(localized: "PickBeon 설정")
-        w.setContentSize(NSSize(width: 640, height: 430))
+        w.setContentSize(NSSize(width: 640, height: 520))
         w.center(); w.isReleasedWhenClosed = false
         WindowDropper.attach(to: w) { [weak self] in self?.settingsWindow = nil }
         settingsWindow = w

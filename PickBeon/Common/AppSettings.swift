@@ -17,6 +17,7 @@ final class AppSettings: ObservableObject {
     @AppStorage("saveImages") var saveImages: Bool = true
     @AppStorage("encryptStore") var encryptStore: Bool = false
     @AppStorage("overlayOn") var overlayOn: Bool = true
+    @AppStorage("transOverlayOn") var transOverlayOn: Bool = false
     @AppStorage("politeTone") var politeTone: Bool = true
     @AppStorage("afterCapture") var afterCapture: String = "card" // card, editor, clipboard
     @AppStorage("gifFps") var gifFps: Int = 10

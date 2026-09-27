@@ -32,7 +32,7 @@ struct PickBeonApp: App {
 
             popover.contentViewController = NSHostingController(
                 rootView: MenuPopupView(coordinator: co).modelContainer(container))
-            popover.contentSize = NSSize(width: 360, height: 260)
+            popover.contentSize = NSSize(width: 360, height: 483)
             popover.behavior = .transient
             popover.animates = true
 

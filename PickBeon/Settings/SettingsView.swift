@@ -6,6 +6,10 @@ struct SettingsView: View {
     @ObservedObject private var uc = UpdateCenter.shared
     @State private var sel = 0
     @State private var search = ""
+    /// 설정 초기화 확인 (파괴적)
+    @State private var confirmReset = false
+    /// 초기화 후 UI 를 강제로 다시 그리기 위한 트리거
+    @State private var resetNonce = 0
 
     private let navs: [(Int, String, String)] = [
         (0, "scissors", "캡쳐"),
@@ -27,7 +31,7 @@ struct SettingsView: View {
             Rectangle().fill(Theme.line).frame(width: 1)
             content
         }
-        .frame(width: 640, height: 430)
+        .frame(width: 640, height: 520)
         .background(Theme.bg)
     }
 
@@ -87,9 +91,13 @@ struct SettingsView: View {
     }
 
     // MARK: 본문
+    // [P0-4] ScrollView 로 감싸지 않아 창 높이(430, 내용 영역 390pt)를 넘는 탭은
+    // 아래쪽이 잘려 접근 불가였다(캡쳐 7카드 ≈534pt, 단축키 10카드 ≈650pt).
+    // → 스크롤 + 우측 스크롤바 노출.
     private var content: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if sel == 0 {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if sel == 0 {
                 SHead(String(localized: "캡쳐"), String(localized: "무엇을 캡쳐하고, 캡쳐 후 어떻게 끝낼지."))
                 SCard(String(localized: "캡쳐 후 동작"), String(localized: "결과 카드 / 에디터 / 클립보드 중 선택")) {
                     Picker("", selection: $s.afterCapture) {
@@ -186,11 +194,15 @@ struct SettingsView: View {
                 SCard(String(localized: "이미지 저장"), String(localized: "PNG 썸네일 보관")) {
                     Toggle("", isOn: $s.saveImages).labelsHidden().tint(Theme.accent)
                 }
-                SCard(String(localized: "암호화"), String(localized: "곧 지원 예정 (AES-256-GCM)")) {
-                    Toggle("", isOn: .constant(false))
-                        .labelsHidden()
-                        .disabled(true)
-                        .opacity(0.4)
+                SCard(String(localized: "암호화"), String(localized: "미지원 — 기록은 평문으로 저장됩니다")) {
+                    // 조작처럼 보이지만 아무 동작도 하지 않는 비활성 토글을 두지 않는다.
+                    // 기능이 없는 건 숨기고, 사실(평문 저장)을 그대로 알린다.
+                    Text(String(localized: "지원 예정"))
+                        .font(Theme.font(11.5, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Theme.surface2)
+                        .clipShape(Capsule())
                 }
             } else if sel == 5 {
                 SHead(String(localized: "업데이트"), String(localized: "GitHub Releases에서 새 버전을 확인합니다."))
@@ -261,22 +273,44 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
-            Spacer()
+            Spacer(minLength: 12)
             HStack {
                 Text(String(localized: "자동으로 저장됨."))
                     .font(Theme.font(11.5))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Button(String(localized: "설정 초기화")) {
-                    UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "")
-                }
-                .font(Theme.font(12))
+                // [HARD 파괴적 변경] 확인 없이 전 설정을 날리던 버튼 → 확인 다이얼로그 필수
+                Button(String(localized: "설정 초기화")) { confirmReset = true }
+                    .font(Theme.font(12))
             }
             .padding(.top, 8)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
+        .id(resetNonce)   // 초기화 직후 값 반영용 트리거
+        .confirmationDialog(
+            String(localized: "모든 설정을 기본값으로 되돌립니다."),
+            isPresented: $confirmReset, titleVisibility: .visible
+        ) {
+            Button(String(localized: "초기화"), role: .destructive) { performReset() }
+            Button(String(localized: "취소"), role: .cancel) { confirmReset = false }
+        } message: {
+            Text(String(localized: "번역 언어·단축키·기록 개수·GIF 설정이 모두 초기화됩니다. 되돌릴 수 없습니다. (히스토리 기록은 남습니다)"))
+        }
+    }
+
+    /// UserDefaults 만 비운다. SwiftData 히스토리는 별도라 살아있음을 다이얼로그에 명시했다.
+    private func performReset() {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        UserDefaults.standard.removePersistentDomain(forName: id)
+        // 실행 중인 @AppStorage 값을 즉시 반영시키기 위해 뷰 트리거
+        resetNonce &+= 1
+        search = ""
+        sel = 0
+        FileLog.log("설정 초기화 실행 (\(id)) nonce=\(resetNonce)")
     }
 
     private var updateStatusLabel: some View {
