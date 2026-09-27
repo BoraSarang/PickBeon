@@ -183,8 +183,10 @@ final class AppCoordinator: ObservableObject {
                                                        windowPick: windowPick)
                     if windowPick {
                         ctl.setWindowCandidates(wins)
-                        ctl.onWindowSelect = { [weak self, weak ctl] win in
-                            self?.didSelectWindow(win, controller: ctl)
+                        // self 는 싱글턴이라 강한 캡처가 안전하다(아래 나머지 클로저와 동일).
+                        // ctl 만 weak — overlayControllers 가 소유자다.
+                        ctl.onWindowSelect = { [weak ctl] win in
+                            self.didSelectWindow(win, controller: ctl)
                         }
                     } else {
                         ctl.onSelect = { rect, display, pointSize in
@@ -196,8 +198,8 @@ final class AppCoordinator: ObservableObject {
                         ctl.onCancel = { self.closeOverlay() }
                         ctl.onReuse = { self.repeatFromOverlay() }
                         if gif {
-                            ctl.onGifRecord = { [weak self, weak ctl] in
-                                self?.confirmGifRecord(controller: ctl)
+                            ctl.onGifRecord = { [weak ctl] in
+                                self.confirmGifRecord(controller: ctl)
                             }
                         }
                         if self.lastArea != .zero {

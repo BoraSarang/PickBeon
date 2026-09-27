@@ -4,9 +4,9 @@ import CoreImage
 
 // 에디터: 좌 이미지(OCR박스+번역오버레이+주석) / 우 OCR·번역+말투토글. 캡쳐 후에만 열림.
 enum AnnotTool { case browse, pen, arrow, rect, text, blur, mosaic }
-enum AnnotKind { case pen, arrow, rect, note, blur, mosaic }
+enum AnnotKind: Equatable { case pen, arrow, rect, note, blur, mosaic }
 
-struct Annotation: Identifiable {
+struct Annotation: Identifiable, Equatable {
     let id = UUID()
     var kind: AnnotKind
     var points: [CGPoint] // 정규화 top-left 좌표. pen=경로, arrow/rect/blur/mosaic=[시작,끝], note=[앵커]
@@ -48,6 +48,8 @@ struct TranslationEditorView: View {
     @State private var pendingText = ""
     @State private var overlayMap: [UUID: String] = [:]
     @State private var overlayBusy = false
+    /// [P0-3] 주석 id → 감열 렌더 결과. body 가 여러 번 평가돼도 CoreImage 를 다시 돌리지 않는다.
+    @State private var redactCache: [UUID: Redactor.Output] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,6 +63,28 @@ struct TranslationEditorView: View {
         }
         .frame(minWidth: 800, minHeight: 520)
         .background(Theme.bg)
+        .onChange(of: annotations) { _, _ in rebuildRedactCache() }
+        .onChange(of: image) { _, _ in rebuildRedactCache() }
+        .onAppear { rebuildRedactCache() }
+    }
+
+    /// 감열 주석의 렌더 결과를 한 번만 계산해 캐시한다.
+    /// 캐시가 없으면 preview 가 비어 보이므로 imagePane 의 else 폴백으로 영역 표시를 대체한다.
+    private func rebuildRedactCache() {
+        guard let image else { redactCache = [:]; return }
+        var next: [UUID: Redactor.Output] = [:]
+        for a in annotations {
+            guard a.kind == .blur || a.kind == .mosaic, a.points.count >= 2 else { continue }
+            let x0 = min(a.points[0].x, a.points[1].x), y0 = min(a.points[0].y, a.points[1].y)
+            let w = abs(a.points[1].x - a.points[0].x), h = abs(a.points[1].y - a.points[0].y)
+            guard w > 0.004, h > 0.004 else { continue }
+            if let out = Redactor.apply(CGRect(x: x0, y: y0, width: w, height: h),
+                                        in: image, style: a.kind == .blur ? .blur : .mosaic) {
+                next[a.id] = out
+            }
+        }
+        if next.count != redactCache.count { redactCache = next; return }
+        for (k, v) in next where redactCache[k]?.image !== v.image { redactCache = next; return }
     }
 
     // MARK: - 툴바
@@ -215,51 +239,50 @@ struct TranslationEditorView: View {
                 }
             case .blur:
                 if pts.count >= 2 {
-                    redactPreview(pts, style: .blur)
+                    if let r = redactCache[a.id] { redactedView(r, map: map) }
+                    else { redactFallback(pts, map: map) }   // 캐시 전(첫 프레임) 영역만 표시
                 }
             case .mosaic:
                 if pts.count >= 2 {
-                    redactPreview(pts, style: .mosaic)
+                    if let r = redactCache[a.id] { redactedView(r, map: map) }
+                    else { redactFallback(pts, map: map) }
                 }
             }
         }
     }
 
-    private enum RedactStyle { case blur, mosaic }
+    /// [P0-3] 미리보기 = 실제 결과. Redactor 출력(정규화 rect + 이미지)을 그대로 그린다.
+    private func redactedView(_ out: Redactor.Output, map: FitMap) -> some View {
+        Image(nsImage: out.image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: max(map.rw * out.rect.width, 1), height: max(map.rh * out.rect.height, 1))
+            .position(x: map.ox + out.rect.midX * map.rw, y: map.oy + out.rect.midY * map.rh)
+            .allowsHitTesting(false)
+    }
 
-    /// B2 미리보기: 실제 합성은 renderAnnotated에서 CoreImage로 수행
-    private func redactPreview(_ pts: [CGPoint], style: RedactStyle) -> some View {
+    /// 캐시 미완성 시 대체 표시. 감열이 사라진 것처럼 보이면 안 되므로 영역을 항상 드러낸다.
+    private func redactFallback(_ pts: [CGPoint], map: FitMap) -> some View {
         let x0 = min(pts[0].x, pts[1].x), y0 = min(pts[0].y, pts[1].y)
         let w = abs(pts[1].x - pts[0].x), h = abs(pts[1].y - pts[0].y)
-        return Group {
-            switch style {
-            case .blur:
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .overlay(Rectangle().stroke(Color.white.opacity(0.35), lineWidth: 1.5))
-                    .frame(width: w, height: h)
-                    .position(x: x0 + w / 2, y: y0 + h / 2)
-            case .mosaic:
-                // 격자 느낌 — 핵심은 "가려졌다"는 인지
-                Canvas { ctx, size in
-                    let cell: CGFloat = max(6, min(w, h) / 12)
-                    var y: CGFloat = 0
-                    while y < size.height {
-                        var x: CGFloat = 0
-                        while x < size.width {
-                            let shade = ((Int(x / cell) + Int(y / cell)) % 2 == 0) ? 0.55 : 0.35
-                            ctx.fill(Path(CGRect(x: x, y: y, width: cell, height: cell)),
-                                     with: .color(.gray.opacity(shade)))
-                            x += cell
-                        }
-                        y += cell
-                    }
-                }
-                .frame(width: w, height: h)
-                .overlay(Rectangle().stroke(Color.white.opacity(0.35), lineWidth: 1.5))
-                .position(x: x0 + w / 2, y: y0 + h / 2)
-            }
-        }
+        return Rectangle()
+            .fill(Color.black.opacity(0.45))
+            .overlay(Rectangle().stroke(Color.white.opacity(0.7), lineWidth: 1.5))
+            .frame(width: w, height: h)
+            .position(x: x0 + w / 2, y: y0 + h / 2)
+            .allowsHitTesting(false)
+    }
+
+    /// 드래그 중(아직 확정 전) 전용: 프레임마다 CoreImage 를 돌리지 않고 영역만 표시.
+    /// 확정 직후 redactedView 로 실제 결과로 교체된다.
+    private func redactDraft(_ pts: [CGPoint]) -> some View {
+        let x0 = min(pts[0].x, pts[1].x), y0 = min(pts[0].y, pts[1].y)
+        let w = abs(pts[1].x - pts[0].x), h = abs(pts[1].y - pts[0].y)
+        return Rectangle()
+            .fill(Color.black.opacity(0.45))
+            .overlay(Rectangle().stroke(Color.white.opacity(0.7), lineWidth: 1.5))
+            .frame(width: w, height: h)
+            .position(x: x0 + w / 2, y: y0 + h / 2)
     }
 
     private func draftLayer(_ map: FitMap, _ d: [CGPoint]) -> some View {
@@ -276,9 +299,9 @@ struct TranslationEditorView: View {
                     }
                 }
             case .blur:
-                if pts.count >= 2 { redactPreview(pts, style: .blur).opacity(0.7) }
+                if pts.count >= 2 { redactDraft(pts) }
             case .mosaic:
-                if pts.count >= 2 { redactPreview(pts, style: .mosaic).opacity(0.7) }
+                if pts.count >= 2 { redactDraft(pts) }
             default: EmptyView()
             }
         }.allowsHitTesting(false)
@@ -564,55 +587,26 @@ struct TranslationEditorView: View {
                 }
             case .blur, .mosaic:
                 if pts.count >= 2 {
-                    let r = NSRect(x: min(pts[0].x, pts[1].x), y: min(pts[0].y, pts[1].y),
-                                   width: abs(pts[1].x - pts[0].x), height: abs(pts[1].y - pts[0].y))
-                    if r.width > 2, r.height > 2,
-                       let redacted = Self.redact(region: r, in: img, style: a.kind == .blur ? .blur : .mosaic) {
-                        redacted.draw(in: r)
-                        red.setStroke()
-                        let bp = NSBezierPath(rect: r); bp.lineWidth = 1; bp.stroke()
-                    }
+                    // [P0-3] 미리보기와 동일한 Redactor 결과를 쓴다.
+                    // 과거엔 AppKit 하단원점 rect 를 CGImage(top-left)에 그대로 넣어
+                    // 세로 대칭 영역을 감췄다. 여기선 정규화 rect → points 로만 변환한다.
+                    guard let out = redactCache[a.id] else { break }
+                    let dest = NSRect(
+                        x: out.rect.minX * size.width,
+                        y: (1 - out.rect.maxY) * size.height,
+                        width: out.rect.width * size.width,
+                        height: out.rect.height * size.height
+                    )
+                    guard dest.width > 1, dest.height > 1 else { break }
+                    out.image.draw(in: dest)
+                    red.setStroke()
+                    let outline = NSRect(x: min(pts[0].x, pts[1].x), y: min(pts[0].y, pts[1].y),
+                                        width: abs(pts[1].x - pts[0].x), height: abs(pts[1].y - pts[0].y))
+                    let bp = NSBezierPath(rect: outline); bp.lineWidth = 1; bp.stroke()
                 }
             }
         }
         out.unlockFocus()
         return out
-    }
-
-    /// B2: 영역 블러/모자이크 합성 (CoreImage) — 복사·핀 시 사용
-    private static func redact(region: NSRect, in img: NSImage, style: RedactStyle) -> NSImage? {
-        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        let scale = CGFloat(cg.width) / max(img.size.width, 1)
-        var px = CGRect(x: region.minX * scale, y: region.minY * scale,
-                        width: region.width * scale, height: region.height * scale)
-        px = px.intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
-        guard px.width > 2, px.height > 2, let crop = cg.cropping(to: px.integral) else { return nil }
-        let ci = CIImage(cgImage: crop)
-        let context = CIContext(options: [.useSoftwareRenderer: false])
-        let outCG: CGImage?
-        switch style {
-        case .blur:
-            let radius = max(6, min(px.width, px.height) * 0.08)
-            let f = CIFilter(name: "CIGaussianBlur")
-            f?.setValue(ci, forKey: kCIInputImageKey)
-            f?.setValue(radius, forKey: kCIInputRadiusKey)
-            // 블러 확장 후 중앙 크롭
-            let expanded = ci.transformed(by: CGAffineTransform(translationX: -radius * 2, y: -radius * 2)
-                .scaledBy(x: 1, y: 1))
-            _ = expanded
-            if let o = f?.outputImage?.cropped(to: ci.extent) {
-                outCG = context.createCGImage(o, from: ci.extent)
-            } else { outCG = nil }
-        case .mosaic:
-            let block = max(4, Int(min(px.width, px.height) / 18))
-            let f = CIFilter(name: "CIPixellate")
-            f?.setValue(ci, forKey: kCIInputImageKey)
-            f?.setValue(Float(block), forKey: kCIInputScaleKey)
-            if let o = f?.outputImage {
-                outCG = context.createCGImage(o, from: ci.extent)
-            } else { outCG = nil }
-        }
-        guard let outCG else { return nil }
-        return NSImage(cgImage: outCG, size: region.size)
     }
 }
