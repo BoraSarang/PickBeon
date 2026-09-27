@@ -16,6 +16,7 @@ struct ResultCardView: View {
                     case .translation: translationBody
                     case .message:     messageBody
                     case .error:       errorBody
+                    case .progress:    progressBody
                     }
                 }
             }
@@ -54,8 +55,16 @@ struct ResultCardView: View {
 
     private var accentBar: some View {
         RoundedRectangle(cornerRadius: 0)
-            .fill(coordinator.cardMode == .error ? Theme.danger : Theme.accent)
+            .fill(accentColor)
             .frame(width: 3)
+    }
+
+    private var accentColor: Color {
+        switch coordinator.cardMode {
+        case .error: return Theme.danger
+        case .progress: return Theme.accent.opacity(0.7)
+        default: return Theme.accent
+        }
     }
 
     private var closeButton: some View {
@@ -144,6 +153,52 @@ struct ResultCardView: View {
             ])
         }
         .padding(.bottom, 4)
+    }
+
+    // MARK: 진행 중
+    /// [FIX] OCR·번역은 수 초~수십 초 걸릴 수 있는데 이전엔 오버레이를 닫은 뒤
+    /// 아무 표시 없이 기다리기만 했다("한참 멍때리다"现象). 단계 텍스트로 진행을 알린다.
+    private var progressBody: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.8)
+                Text(coordinator.cardTitle.isEmpty ? String(localized: "처리 중") : coordinator.cardTitle)
+                    .font(Theme.font(13, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            if !coordinator.cardBody.isEmpty {
+                Text(coordinator.cardBody)
+                    .font(Theme.font(11.5))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            if let img = coordinator.latestImage {
+                HStack(spacing: 9) {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 68, height: 46)
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.line, lineWidth: 1))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(localized: "캡쳐 원본"))
+                            .font(Theme.font(11.5, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(String(localized: "완료되면 번역문이 표시됩니다"))
+                            .font(Theme.font(10.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(8)
+                .background(Theme.row)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.rBlock))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
     }
 
     // MARK: 에러

@@ -6,7 +6,7 @@ import Combine
 
 // 전역 라우터: 메뉴 클릭 → NSWindow 직접 띄우기 (SwiftUI 상태 토글 아님).
 enum ResultMode {
-    case translation, message, error
+    case translation, message, error, progress
 }
 
 enum CardAction {
@@ -878,30 +878,46 @@ final class AppCoordinator: ObservableObject {
 
     // MARK: - 파이프라인: OCR → 번역 → 복사 → afterCapture 라우팅
     func runTranslate(img: NSImage) async {
+        // [FIX] 이전엔 오버레이를 닫은 뒤 결과가 나올 때까지 아무 표시도 없었다.
+        // OCR 이 첫 호출에 수십 초 걸릴 수 있어(모델 로딩) 진행 상태를 먼저 띄운다.
+        showProgress(title: String(localized: "텍스트 인식 중…"),
+                      body: String(localized: "화면의 글자를 읽고 있습니다"))
         FileLog.log("OCR 시작")
+
+        // OCR 실패를 번역 실패와 분리 — "인식이 안 됐어" 와 "번역이 안 됐어" 는 원인이 다르다
+        let lines: [OCRLine]
         do {
-            let lines = try await ocr.recognize(img)
-            let joined = lines.map(\.text).joined(separator: "\n")
-            FileLog.log("OCR 완료 \(lines.count)줄")
-            guard !joined.isEmpty else {
-                cardMode = .message
-                cardAction = .none
-                cardTitle = String(localized: "텍스트 없음")
-                cardBody = String(localized: "선택 영역에서 텍스트를 찾지 못했습니다.")
-                showResultCard()
-                return
-            }
-            latestText = joined
-            FileLog.log("번역 시작: \(joined.prefix(30))")
-            let out = try await translator.translate(joined, polite: AppSettings.shared.politeTone)
-            FileLog.log("번역 완료")
-            latestTranslated = out
-            PasteboardService.write(text: out)
-            if let ctx = modelContext {
-                clipboard.add(text: joined, translated: out, context: ctx)
-            }
-            DebugLogger.shared.cache("파이프라인 완료, 클립보드 복사")
-            routeAfterCapture()
+            lines = try await ocr.recognize(img)
+        } catch {
+            FileLog.log("OCR 실패 \(error)")
+            DebugLogger.shared.error(code: "E-MAC-OCR-0001", "OCR 실패 \(error)")
+            cardMode = .error
+            cardAction = .none
+            cardTitle = String(localized: "⚠ 텍스트 인식 실패")
+            cardBody = String(localized: "영역을 다시 선택하거나 조금 더 크게 잡아주세요.")
+            showResultCard()
+            return
+        }
+
+        let joined = lines.map(\.text).joined(separator: "\n")
+        FileLog.log("OCR 완료 \(lines.count)줄")
+        guard !joined.isEmpty else {
+            cardMode = .message
+            cardAction = .none
+            cardTitle = String(localized: "텍스트 없음")
+            cardBody = String(localized: "선택 영역에서 텍스트를 찾지 못했습니다.")
+            showResultCard()
+            return
+        }
+
+        latestText = joined
+        showProgress(title: String(localized: "번역 중…"),
+                      body: String(localized: "온디바이스 번역을 준비하고 있습니다"))
+        FileLog.log("번역 시작: \(joined.prefix(30))")
+
+        let out: String
+        do {
+            out = try await translator.translate(joined, polite: AppSettings.shared.politeTone)
         } catch PickBeonError.trans(_, let code) where code == "E-MAC-TRANS-0005" {
             FileLog.log("번역 언어팩 미설치")
             cardMode = .error
@@ -909,6 +925,7 @@ final class AppCoordinator: ObservableObject {
             cardTitle = String(localized: "⚠ 번역 언어팩 필요")
             cardBody = String(localized: "시스템 설정에서 번역 언어를 다운로드한 뒤 다시 시도하세요.")
             showResultCard()
+            return
         } catch {
             FileLog.log("번역 실패 \(error)")
             DebugLogger.shared.error(code: "E-MAC-TRANS-0001", "번역 실패 \(error)")
@@ -917,7 +934,26 @@ final class AppCoordinator: ObservableObject {
             cardTitle = String(localized: "⚠ 번역 실패")
             cardBody = String(localized: "다시 시도해주세요.")
             showResultCard()
+            return
         }
+
+        FileLog.log("번역 완료")
+        latestTranslated = out
+        PasteboardService.write(text: out)
+        if let ctx = modelContext {
+            clipboard.add(text: joined, translated: out, context: ctx)
+        }
+        DebugLogger.shared.cache("파이프라인 완료, 클립보드 복사")
+        routeAfterCapture()
+    }
+
+    /// 처리 중 카드 (자동숨김 없음)
+    private func showProgress(title: String, body: String) {
+        cardMode = .progress
+        cardAction = .none
+        cardTitle = title
+        cardBody = body
+        showResultCard()
     }
 
     /// 설정: afterCapture (card=번역카드 / editor=에디터 / clipboard=토스트만)
@@ -1033,10 +1069,10 @@ final class AppCoordinator: ObservableObject {
         return NSScreen.main
     }
 
-    /// 번역·메시지만 3초 자동숨김. 에러카드는 유지(사용자 액션 필요).
+    /// 번역·메시지만 3초 자동숨김. 에러·진행중 카드는 유지(사용자 액션 필요).
     private func scheduleCardHide() {
         cancelCardTimer()
-        guard cardMode != .error, !cardPinned else { return }
+        guard cardMode != .error, cardMode != .progress, !cardPinned else { return }
         cardHideTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, !self.cardHovering, !self.cardPinned else { return }
