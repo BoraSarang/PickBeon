@@ -800,43 +800,17 @@ struct CaptureToolbarView: View {
     @State private var hover: CaptureAction?
     @State private var hoverSame = false
     @State private var hoverRecord = false
-    @State private var hoverQuick = false
 
     var body: some View {
         if gifMode {
             gifRecordBar
-        } else if quickCopy {
-            quickCopyBar
         } else {
             captureBar
         }
     }
 
-    /// A2: 영역 확정 후 '복사' → OCR 즉시 클립보드 (번역 스킵)
-    private var quickCopyBar: some View {
-        HStack(spacing: 8) {
-            Button { onAction(.ocrCopy) } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "doc.on.doc").font(.system(size: 12, weight: .bold))
-                    Text(String(localized: "복사")).font(Theme.font(12, weight: .semibold))
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(hoverQuick ? Theme.accent.opacity(0.9) : Theme.accent)
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .contentShape(RoundedRectangle(cornerRadius: 9))
-            }
-            .buttonStyle(.plain)
-            .onHover { hoverQuick = $0 }
-            Text(String(localized: "Esc 취소"))
-                .font(Theme.font(11))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .padding(5)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.white.opacity(0.14)))
-        .shadow(radius: 12)
-    }
+    // [P0-5 부수] quickCopy(⌥⌘C) 툴바는 도달 불가였다 — layoutPanels() 가 quickCopyMode 에서
+    // 항상 toolbar.orderOut() 하므로 화면에 뜨지 않았다. 제거.
 
     /// GIF: 영역 확정 후 '녹화' 시작 (자동 시작 아님)
     private var gifRecordBar: some View {
