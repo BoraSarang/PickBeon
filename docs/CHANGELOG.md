@@ -1,4 +1,32 @@
 # CHANGELOG
+## v0.7.1-macos 중간 점검 P0 수정 (2026-09-27)
+> 중간 감사에서 발견된 "동작하지 않는" 경로 일괄 수정. 기능 추가가 아니라 신뢰성 복구.
+
+- [macos] **번역**: macOS 15~25에서 원문을 "번역"으로 반환하던 no-op 제거 → `E-MAC-TRANS-0002` 명시 실패.
+  SDK 감사 결과 `TranslationSession` 생성(`installedSource:target:`)은 macOS 26.0+ 전용이며,
+  macOS 15 에서는 SwiftUI `View.translationTask`(15.0+) 안에서만 세션을 얻을 수 있다.
+  게이트는 유지하되 조용한 성공을 금지. `isStandaloneSessionSupported` 노출으로 UI 게이팅 가능.
+- [macos] **클립보드**: `writeObjects` 와 `setData/setString` 혼용으로 데이터가 소실되던 결함 2곳 수정
+  (에디터 복사 시 번역문 증발, GIF 복사 시 GIF 바이트 증발). `PasteboardService` 신설로 22곳 통합.
+  복사 결과 토스트("복사됨 · 주석 포함") 추가.
+- [macos] **블러/모자이크**: AppKit 하단원점 rect 를 CGImage(top-left)에 그대로 넣던 오류로
+  **세로 대칭 영역을 가리던** 결함 수정. `Redactor` 로 좌표계 통합, preview = 실제 결과 보장.
+  blur 가장자리 검은 테두리 제거(pad 샘플), drag 중에는 영역만 표시.
+- [macos] **설정**: ScrollView 미적용으로 하단 항목이 잘려 접근 불가하던 문제 수정
+  (캡쳐 탭 2개, 단축키 탭 4~5개). 창 430 → 520pt.
+- [macos] **메뉴 팝오버**: 240pt 안에 7개 항목이 들어가지 않아 4개가 폴드 아래에 있던 문제 수정
+  (463pt + 행 압축). `영역 Pick` 을 실제 primary 스타일로 분리.
+- [macos] **GIF**: 녹화 중 Esc 가 오버레이만 닫고 녹화를 계속하던 결함 수정, 그리고
+  오버레이가 마우스를 전부 삼켜 다른 앱을 조작할 수 없던 문제 수정(녹화 중 클릭 통과).
+- [macos] **업데이트**: 비공개 저장소라 항상 404 였던 문제. 원인 명확화 + 저장소 지정 UI 추가.
+- [macos] `설정 초기화`에 확인 다이얼로그 추가(파괴적 변경 가드).
+- [macos] 메뉴 설정 탭의 "번역 오버레이" 토글이 실제로는 OCR 박스를 조작하던 라벨 오류 수정.
+- [macos] 아무 동작도 하지 않는 비활성 "암호화" 토글을 상태 배지로 교체.
+- [macos] 히스토리 창을 `close()` 로 종료(재오픈 시 상태 초기화), `orderOut` 누수 해결.
+- [macos] 말투 변환 "습니다"→"어"(있습니다 → "있이어") 규칙 오류 수정.
+- [macos] 컴파일 경고 2건 제거, `error_message_ko.json` 누락 코드 보강, RACE 제거(ToneShaper 분리).
+- [docs] RESEARCH 격차 재평가(2026-09-27 CleanShot X·TextSniper 공식 확인), TODO ↔ bd 정합화.
+
 ## v0.7.0-macos A2/B3/B2/C1 백로그 (2026-09-24)
 - [macos] A2 텍스트 바로 복사 ⌥⌘C: 영역 드래그 → OCR → 클립보드 즉시 (TextSniper류, 번역 스킵, 결과카드)
 - [macos] B3 윈도우 캡쳐 ⌥⌘W: 창 hover 하이라이트 + 클릭 → SCContentFilter 독립 창 캡쳐 → 프리즈 툴바
