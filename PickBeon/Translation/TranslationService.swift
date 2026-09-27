@@ -23,7 +23,7 @@ final class TranslationService: ObservableObject {
     static var isStandaloneSessionSupported: Bool { true }
 
     func translate(_ text: String, polite: Bool) async throws -> String {
-        FileLog.log("번역 시작: \(text.prefix(30))")
+        AppLog.sensitive("번역 입력", text)
         isTranslating = true
         defer { isTranslating = false }
         let targetID = AppSettings.shared.effectiveTargetID()
@@ -33,7 +33,7 @@ final class TranslationService: ObservableObject {
         )
         let final = ToneShaper.apply(out, polite: polite)
         result = final
-        FileLog.log("번역 완료")
+        AppLog.log("번역 완료")
         return final
     }
 
@@ -62,7 +62,7 @@ final class TranslationService: ObservableObject {
         let source = Locale.Language(identifier: sourceID)
 
         let status = await LanguageAvailability().status(from: source, to: target)
-        FileLog.log("언어팩 상태 \(sourceID)->\(targetID) \(status)")
+        AppLog.log("언어팩 상태 \(sourceID)->\(targetID) \(status)")
         guard status == .installed else {
             throw PickBeonError.trans("번역 언어팩 필요", code: "E-MAC-TRANS-0005")
         }
@@ -71,16 +71,16 @@ final class TranslationService: ObservableObject {
         do {
             try await session.prepareTranslation()
         } catch {
-            FileLog.log("prepareTranslation 실패 \(error)")
+            AppLog.log("prepareTranslation 실패 \(error)")
             throw PickBeonError.trans("번역 준비 실패", code: "E-MAC-TRANS-0004")
         }
-        FileLog.log("번역 세션 준비됨")
+        AppLog.log("번역 세션 준비됨")
 
         do {
             let resp = try await session.translate(text)
             return resp.targetText
         } catch {
-            FileLog.log("session.translate 실패 \(error)")
+            AppLog.log("session.translate 실패 \(error)")
             throw PickBeonError.trans("번역 실패", code: "E-MAC-TRANS-0001")
         }
     }

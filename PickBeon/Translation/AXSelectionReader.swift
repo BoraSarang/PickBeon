@@ -20,17 +20,17 @@ enum AXSelectionReader {
     /// AX 우선, 실패 시 Cmd+C 폴백 (Safari/Firefox 등). 비동기 대기 포함.
     static func readSelectedTextWithFallback() async -> String? {
         if let s = readSelectedText(), !s.isEmpty { return s }
-        FileLog.log("AX 선택 없음, Cmd+C 폴백 시도")
+        AppLog.log("AX 선택 없음, Cmd+C 폴백 시도")
         let saved = savePasteboard()
         postCommandC()
         try? await Task.sleep(nanoseconds: 180_000_000)
         let clip = PasteboardService.string
         restorePasteboard(saved)
         if let s = clip, !s.isEmpty {
-            FileLog.log("폴백 성공 \(s.prefix(30))")
+            AppLog.sensitive("AX 폴백 텍스트", s)
             return s
         }
-        FileLog.log("폴백도 선택 텍스트 없음")
+        AppLog.log("폴백도 선택 텍스트 없음")
         return nil
     }
 

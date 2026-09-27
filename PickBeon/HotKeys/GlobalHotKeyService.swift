@@ -102,7 +102,7 @@ final class GlobalHotKeyService: ObservableObject {
             .joined(separator: " ")
         DebugLogger.shared.info(feature: "HotKey", "전역 단축키 등록 \(summary)")
         if !failed.isEmpty {
-            FileLog.log("단축키 등록 실패 \(failed.map(\.rawValue).joined(separator: ",")) — 다른 앱이 사용 중")
+            AppLog.log("단축키 등록 실패 \(failed.map(\.rawValue).joined(separator: ",")) — 다른 앱이 사용 중")
         }
     }
 

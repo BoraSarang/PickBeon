@@ -249,7 +249,7 @@ final class CaptureOverlayController {
         overlay.needsDisplay = true
         refreshToolbar()
         layoutPanels()
-        FileLog.log("GIF 준비 완료 — 녹화 버튼 대기")
+        AppLog.log("GIF 준비 완료 — 녹화 버튼 대기")
     }
 
     /// GIF 녹화 시작: rect는 top-left → overlay.sel은 bottom-left. 툴바/힌트 숨김, REC 표시.
@@ -275,7 +275,7 @@ final class CaptureOverlayController {
         if window.isVisible == false {
             window.makeKeyAndOrderFront(nil)
         }
-        FileLog.log("GIF REC 표시 TL=\(rect) → BL=\(String(describing: overlay.sel)) 마우스통과 ON")
+        AppLog.log("GIF REC 표시 TL=\(rect) → BL=\(String(describing: overlay.sel)) 마우스통과 ON")
     }
 
     /// GIF 녹화 종료: REC 표시 해제 + 마우스 다시 차단 (오버레이 닫기는 AppCoordinator가 처리)
@@ -300,7 +300,7 @@ final class CaptureOverlayController {
     // mouseUp → 즉시 캡쳐 요청. option 보관(프리즈 후 즉시 번역).
     private func beginCapture(rect: CGRect, option: Bool) {
         guard !gifRecording else {
-            FileLog.log("GIF 녹화 중 beginCapture 무시")
+            AppLog.log("GIF 녹화 중 beginCapture 무시")
             return
         }
         guard rect.width > 10, rect.height > 10 else { return }
@@ -347,7 +347,7 @@ final class CaptureOverlayController {
                              width: tlRect.width, height: tlRect.height)
         hintbar.orderOut(nil)
         freeze(image)
-        FileLog.log("창 프리즈 TL=\(tlRect)")
+        AppLog.log("창 프리즈 TL=\(tlRect)")
     }
 
     // 핸들 리사이즈 확정: loupe용 전체샷에서 로컬 crop (재캡쳐 없이 즉시)
@@ -456,7 +456,7 @@ final class CaptureOverlayController {
         }
         toolbar.setFrameOrigin(NSPoint(x: x, y: y))
         toolbar.orderFrontRegardless()
-        FileLog.log("툴바 배치 sel=\(selRect) panel=\(Int(pw))x\(Int(ph)) pos=\(String(format:"%.0f,%.0f", x, y)) mode=\(mode)")
+        AppLog.log("툴바 배치 sel=\(selRect) panel=\(Int(pw))x\(Int(ph)) pos=\(String(format:"%.0f,%.0f", x, y)) mode=\(mode)")
     }
 }
 

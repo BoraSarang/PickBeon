@@ -63,7 +63,7 @@ final class GifRecorder: NSObject, ObservableObject, @unchecked Sendable {
         let h = max(2, Int(px.height.rounded()) & ~1)
         px = CGRect(x: px.minX.rounded(), y: px.minY.rounded(),
                     width: CGFloat(w), height: CGFloat(h))
-        FileLog.log("GIF prepare areaTL=\(areaPoints) pointSize=\(pointSize) cropPx=\(px) scale=\(sx),\(sy)")
+        AppLog.log("GIF prepare areaTL=\(areaPoints) pointSize=\(pointSize) cropPx=\(px) scale=\(sx),\(sy)")
         return GifRecorder(display: display, fps: fps, maxSeconds: maxSeconds, cropRectPx: px)
     }
 
@@ -92,7 +92,7 @@ final class GifRecorder: NSObject, ObservableObject, @unchecked Sendable {
             let pid = ProcessInfo.processInfo.processIdentifier
             exclude = content.windows.filter { $0.owningApplication?.processID == pid }
         } catch {
-            FileLog.log("SCShareableContent 실패, 제외 윈도우 없음 \(error)")
+            AppLog.log("SCShareableContent 실패, 제외 윈도우 없음 \(error)")
             exclude = []
         }
         let filter = SCContentFilter(display: display, excludingWindows: exclude)
@@ -121,7 +121,7 @@ final class GifRecorder: NSObject, ObservableObject, @unchecked Sendable {
             self.elapsed = 0
             self.frameCount = 0
         }
-        FileLog.log("GIF 녹화 시작 \(Int(cropRectPx.width))x\(Int(cropRectPx.height)) fps=\(fps) max=\(maxSeconds)s exclude=\(exclude.count) queueDepth=12")
+        AppLog.log("GIF 녹화 시작 \(Int(cropRectPx.width))x\(Int(cropRectPx.height)) fps=\(fps) max=\(maxSeconds)s exclude=\(exclude.count) queueDepth=12")
 
         startTickTimer()
         startElapsedTimer()
@@ -130,7 +130,7 @@ final class GifRecorder: NSObject, ObservableObject, @unchecked Sendable {
             maxTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(maxSeconds) * 1_000_000_000)
                 guard let self, !Task.isCancelled else { return }
-                FileLog.log("GIF 최대시간 \(maxSeconds)s 도달 → 자동 중지")
+                AppLog.log("GIF 최대시간 \(maxSeconds)s 도달 → 자동 중지")
                 await self.stop()
             }
         }
@@ -234,13 +234,13 @@ final class GifRecorder: NSObject, ObservableObject, @unchecked Sendable {
 
     func stop() async {
         guard markStopped() else { return }
-        FileLog.log("GIF stop 호출")
+        AppLog.log("GIF stop 호출")
 
         stopTimers()
         await MainActor.run { self.isRecording = false }
         maxTask?.cancel()
         maxTask = nil
-        do { try await stream?.stopCapture() } catch { FileLog.log("GIF stopCapture \(error)") }
+        do { try await stream?.stopCapture() } catch { AppLog.log("GIF stopCapture \(error)") }
         stream = nil
 
         let finished: Data? = await withCheckedContinuation { cont in
@@ -252,7 +252,7 @@ final class GifRecorder: NSObject, ObservableObject, @unchecked Sendable {
         }
         let counts = snapshotCounts()
         let duration = startDate.map { Date().timeIntervalSince($0) } ?? 0
-        FileLog.log("GIF 녹화 종료 frames=\(counts.frames) src=\(counts.src) static=\(counts.static) \(String(format: "%.1f", duration))s data=\(finished?.count ?? 0)B")
+        AppLog.log("GIF 녹화 종료 frames=\(counts.frames) src=\(counts.src) static=\(counts.static) \(String(format: "%.1f", duration))s data=\(finished?.count ?? 0)B")
         guard let cb = takeCompletion() else { return }
         if let data = finished, counts.frames > 0 {
             await cb(.success((data, counts.frames, duration)))
@@ -320,7 +320,7 @@ extension GifRecorder: SCStreamOutput {
 // MARK: - SCStreamDelegate
 extension GifRecorder: SCStreamDelegate {
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        FileLog.log("GIF stream error \(error)")
+        AppLog.log("GIF stream error \(error)")
         guard markStopped() else { return }
         stopTimers()
         maxTask?.cancel()

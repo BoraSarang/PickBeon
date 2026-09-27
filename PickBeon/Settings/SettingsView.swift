@@ -327,7 +327,7 @@ struct SettingsView: View {
         hotKeyNonce &+= 1
         search = ""
         sel = 0
-        FileLog.log("설정 초기화 실행 (\(id)) nonce=\(resetNonce)")
+        AppLog.log("설정 초기화 실행 (\(id)) nonce=\(resetNonce)")
     }
 
     // MARK: 단축키 편집 (2026-09-27 전부 사용자 지정 가능)
@@ -445,13 +445,13 @@ struct SettingsView: View {
             $0 != action && s.hotKey(for: $0) == captured
         }) {
             NSSound.beep()
-            FileLog.log("단축키 중복 거부 \(captured.display) — \(other.rawValue) 와 동일")
+            AppLog.log("단축키 중복 거부 \(captured.display) — \(other.rawValue) 와 동일")
             return
         }
         s.setHotKey(captured, for: action)
         GlobalHotKeyService.shared.apply(s)
         hotKeyNonce &+= 1
-        FileLog.log("단축키 변경 \(action.rawValue) = \(captured.display)")
+        AppLog.log("단축키 변경 \(action.rawValue) = \(captured.display)")
     }
 
     private var updateStatusLabel: some View {

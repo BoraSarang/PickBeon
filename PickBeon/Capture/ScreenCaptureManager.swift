@@ -10,32 +10,32 @@ final class ScreenCaptureManager: ObservableObject {
     @Published var lastImage: NSImage?
 
     func captureArea(_ rect: CGRect, display: SCDisplay, pointSize: CGSize) async throws -> NSImage {
-        FileLog.log("캡쳐 시작 \(rect) display=\(display.displayID)")
+        AppLog.log("캡쳐 시작 \(rect) display=\(display.displayID)")
         let w = display.width, h = display.height
-        FileLog.log("전체 캡쳐 요청 \(w)x\(h)")
+        AppLog.log("전체 캡쳐 요청 \(w)x\(h)")
         let full = try await Self.shot(display: display, width: w, height: h)
-        FileLog.log("프레임 수신 \(full.width)x\(full.height) (포인트 \(pointSize))")
+        AppLog.log("프레임 수신 \(full.width)x\(full.height) (포인트 \(pointSize))")
         // 실측 스케일로 크롭 (디스플레이 스케일 모드와 무관)
         let sx = CGFloat(full.width) / pointSize.width
         let sy = CGFloat(full.height) / pointSize.height
         var px = CGRect(x: rect.minX * sx, y: rect.minY * sy,
                         width: rect.width * sx, height: rect.height * sy)
         px = px.intersection(CGRect(x: 0, y: 0, width: full.width, height: full.height))
-        FileLog.log("크롭 \(px) (sx=\(sx) sy=\(sy))")
+        AppLog.log("크롭 \(px) (sx=\(sx) sy=\(sy))")
         guard px.width > 4, px.height > 4,
               let cropped = full.cropping(to: px.integral) else {
-            FileLog.log("크롭 실패 \(px)")
+            AppLog.log("크롭 실패 \(px)")
             throw PickBeonError.capture("영역 잘라내기 실패", code: "E-MAC-CAPTURE-0002")
         }
         let ns = NSImage(cgImage: cropped, size: rect.size)
         lastImage = ns
-        FileLog.log("캡쳐 완료 \(Int(rect.width))x\(Int(rect.height))")
+        AppLog.log("캡쳐 완료 \(Int(rect.width))x\(Int(rect.height))")
         return ns
     }
 
     /// B3: 개별 창 캡쳐 (자기 앱 창 제외 필터는 호출부 책임)
     func captureWindow(_ window: SCWindow) async throws -> NSImage {
-        FileLog.log("창 캡쳐 \(window.title ?? "?") frame=\(window.frame)")
+        AppLog.log("창 캡쳐 \(window.title ?? "?") frame=\(window.frame)")
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
@@ -45,7 +45,7 @@ final class ScreenCaptureManager: ObservableObject {
         let cg = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         let ns = NSImage(cgImage: cg, size: window.frame.size)
         lastImage = ns
-        FileLog.log("창 캡쳐 완료 \(cg.width)x\(cg.height)")
+        AppLog.log("창 캡쳐 완료 \(cg.width)x\(cg.height)")
         return ns
     }
 
@@ -69,27 +69,5 @@ final class ScreenCaptureManager: ObservableObject {
             group.cancelAll()
             return img
         }
-    }
-}
-
-// 파일 로그: ~/Desktop/PickBeon/debug.log ( unified 로그 미노출 대비 )
-enum FileLog {
-    static func log(_ msg: String) {
-        let line = "[\(Date())] \(msg)\n"
-        print("[PickBeon] \(msg)")
-        do {
-            let dir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Desktop/PickBeon", isDirectory: true)
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let url = dir.appendingPathComponent("debug.log")
-            if FileManager.default.fileExists(atPath: url.path) {
-                let h = try FileHandle(forWritingTo: url)
-                h.seekToEndOfFile()
-                h.write(Data(line.utf8))
-                try h.close()
-            } else {
-                try Data(line.utf8).write(to: url)
-            }
-        } catch { /* 로그 실패는 무시 */ }
     }
 }

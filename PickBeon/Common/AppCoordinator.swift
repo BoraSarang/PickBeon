@@ -146,7 +146,7 @@ final class AppCoordinator: ObservableObject {
                       quickCopy: Bool = false, windowPick: Bool = false) {
         // GIF 녹화 진행 중 일반 캡쳐 금지 (REC 오버레이 보호)
         if gifRecorder != nil {
-            FileLog.log("GIF 진행 중 startCapture 무시 gif=\(gif)")
+            AppLog.log("GIF 진행 중 startCapture 무시 gif=\(gif)")
             return
         }
         guard permissions.screenRecordingOK else { showOnboarding(); return }
@@ -237,7 +237,7 @@ final class AppCoordinator: ObservableObject {
                 }
                 DebugLogger.shared.info(feature: "Capture", "오버레이 \(shown)화면 표시")
                 if shown == 0 {
-                    FileLog.log("디스플레이 매칭 실패")
+                    AppLog.log("디스플레이 매칭 실패")
                     closeOverlay()
                     cardMode = .error
                     cardAction = .openScreenRecording
@@ -246,7 +246,7 @@ final class AppCoordinator: ObservableObject {
                     showResultCard()
                 }
             } catch {
-                FileLog.log("화면 목록 실패 \(error)")
+                AppLog.log("화면 목록 실패 \(error)")
                 closeOverlay()
                 cardMode = .error
                 cardAction = .openScreenRecording
@@ -274,7 +274,7 @@ final class AppCoordinator: ObservableObject {
     func didSelectArea(_ rect: CGRect, display: SCDisplay, pointSize: CGSize, controller: CaptureOverlayController) {
         // 녹화 중/대기 중 도착한 선택은 무시 (입력 가드 우회 방어)
         if gifRecorder != nil {
-            FileLog.log("GIF 진행 중 onSelect 무시 rect=\(rect)")
+            AppLog.log("GIF 진행 중 onSelect 무시 rect=\(rect)")
             return
         }
         lastArea = rect
@@ -356,10 +356,10 @@ final class AppCoordinator: ObservableObject {
         guard gifRecorder == nil,
               let rect = gifPendingRect,
               let display = gifPendingDisplay else {
-            FileLog.log("GIF 녹화 확인 조건 미충족")
+            AppLog.log("GIF 녹화 확인 조건 미충족")
             return
         }
-        FileLog.log("GIF 녹화 버튼 클릭 rect=\(rect)")
+        AppLog.log("GIF 녹화 버튼 클릭 rect=\(rect)")
         gifMode = false
         // 선택 Esc → 녹화 중에는 HUD Esc로 대체
         if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }
@@ -373,7 +373,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     func performAction(_ action: CaptureAction, image: NSImage) {
-        FileLog.log("액션 \(action)")
+        AppLog.log("액션 \(action)")
         closeOverlay()
         Task { await self.applyAction(action, image: image) }
     }
@@ -560,19 +560,19 @@ final class AppCoordinator: ObservableObject {
     func startGifCapture() {
         // 1) 실제 녹화 중 → 중지
         if gifRecorder?.isRecording == true {
-            FileLog.log("GIF 단축키: 녹화 중 → 중지")
+            AppLog.log("GIF 단축키: 녹화 중 → 중지")
             Task { await stopGifRecording() }
             return
         }
         // 2) 시작 대기/정지 진행 중 (start 미완료) → 취소
         if gifRecorder != nil {
-            FileLog.log("GIF 단축키: 시작/정지 대기 → 취소")
+            AppLog.log("GIF 단축키: 시작/정지 대기 → 취소")
             Task { await cancelPendingGif() }
             return
         }
         // 3) 영역 선택/녹화 대기 중 → 취소
         if gifMode || !overlayControllers.isEmpty {
-            FileLog.log("GIF 단축키: 선택/대기 중 → 취소")
+            AppLog.log("GIF 단축키: 선택/대기 중 → 취소")
             closeOverlay()
             return
         }
@@ -606,7 +606,7 @@ final class AppCoordinator: ObservableObject {
     /// B3: 창 클릭 → 캡쳐 → 프리즈 툴바 (번역/복사/저장 등)
     private func didSelectWindow(_ window: SCWindow, controller: CaptureOverlayController?) {
         guard let screen = controller?.screen else { return }
-        FileLog.log("창 선택 \(window.title ?? "?") \(window.frame)")
+        AppLog.log("창 선택 \(window.title ?? "?") \(window.frame)")
         Task { [weak self, weak controller, weak window] in
             guard let self, let window else { return }
             do {
@@ -628,7 +628,7 @@ final class AppCoordinator: ObservableObject {
                     controller?.freezeWindow(img, tlRect: tl)
                 }
             } catch {
-                FileLog.log("창 캡쳐 실패 \(error)")
+                AppLog.log("창 캡쳐 실패 \(error)")
                 await MainActor.run {
                     self.closeOverlay()
                     self.cardMode = .error
@@ -664,7 +664,7 @@ final class AppCoordinator: ObservableObject {
         let rec = GifRecorder.prepare(areaPoints: rect, pointSize: pointSize, display: display,
                                       fps: s.gifFps, maxSeconds: s.gifMaxSeconds)
         gifRecorder = rec
-        FileLog.log("GIF 시작 진입 rect=\(rect) crop 준비")
+        AppLog.log("GIF 시작 진입 rect=\(rect) crop 준비")
         showGifHud(recorder: rec)
         observeGifElapsed(rec)
         do {
@@ -672,9 +672,9 @@ final class AppCoordinator: ObservableObject {
                                 fps: s.gifFps, maxSeconds: s.gifMaxSeconds) { [weak self] result in
                 Task { @MainActor in self?.finishGif(result) }
             }
-            FileLog.log("GIF startCapture OK isRecording=\(rec.isRecording)")
+            AppLog.log("GIF startCapture OK isRecording=\(rec.isRecording)")
         } catch {
-            FileLog.log("GIF 시작 실패 \(error)")
+            AppLog.log("GIF 시작 실패 \(error)")
             clearGifElapsed()
             overlayControllers.forEach { $0.endGifRecording() }
             closeGifHud()
@@ -708,7 +708,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func finishGif(_ result: Result<(data: Data, frames: Int, duration: TimeInterval), Error>) {
-        FileLog.log("GIF finish 시작 frames/duration=\(String(describing: try? result.get().frames))/\(String(describing: try? result.get().duration))")
+        AppLog.log("GIF finish 시작 frames/duration=\(String(describing: try? result.get().frames))/\(String(describing: try? result.get().duration))")
         // REC 표시만 해제 — closeOverlay는 아래에서 (finish 중 새 오버레이 실수 방지 위해 recorder 정리 후)
         clearGifElapsed()
         overlayControllers.forEach { $0.endGifRecording() }
@@ -736,7 +736,7 @@ final class AppCoordinator: ObservableObject {
                 let url = try saveGIF(r.data)
                 savedPath = url.path(percentEncoded: false)
             } catch {
-                FileLog.log("GIF 저장 실패 \(error)")
+                AppLog.log("GIF 저장 실패 \(error)")
             }
             if AppSettings.shared.gifAutoCopy {
                 // [P0-2] 과거엔 declareTypes+setData(GIF) 뒤에 writeObjects(파일URL)를 불러
@@ -762,7 +762,7 @@ final class AppCoordinator: ObservableObject {
                 Task { await translateGifKeyFrames(first) }
             }
         case .failure(let err):
-            FileLog.log("GIF 실패 \(err)")
+            AppLog.log("GIF 실패 \(err)")
             cardMode = .error
             cardAction = .none
             cardTitle = String(localized: "⚠ GIF 실패")
@@ -788,7 +788,7 @@ final class AppCoordinator: ObservableObject {
             let lines = try await ocr.recognize(image)
             let text = lines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
-                FileLog.log("C1: GIF 프레임 텍스트 없음")
+                AppLog.log("C1: GIF 프레임 텍스트 없음")
                 return
             }
             let out = try await translator.translate(text, polite: AppSettings.shared.politeTone)
@@ -803,9 +803,9 @@ final class AppCoordinator: ObservableObject {
                 cardAction = .none
                 showResultCard()
             }
-            FileLog.log("C1: GIF 프레임 번역 완료 \(text.count)자")
+            AppLog.log("C1: GIF 프레임 번역 완료 \(text.count)자")
         } catch {
-            FileLog.log("C1: GIF 프레임 번역 실패 \(error)")
+            AppLog.log("C1: GIF 프레임 번역 실패 \(error)")
         }
     }
 
@@ -860,7 +860,7 @@ final class AppCoordinator: ObservableObject {
         } else { panel.center() }
         gifHudPanel = panel
         panel.orderFrontRegardless()
-        FileLog.log("GIF HUD 표시 origin=\(NSStringFromPoint(panel.frame.origin)) size=\(NSStringFromSize(panel.frame.size))")
+        AppLog.log("GIF HUD 표시 origin=\(NSStringFromPoint(panel.frame.origin)) size=\(NSStringFromSize(panel.frame.size))")
         gifEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             if e.keyCode == 53 {
                 Task { @MainActor in await self?.stopGifRecording() }
@@ -882,14 +882,14 @@ final class AppCoordinator: ObservableObject {
         // OCR 이 첫 호출에 수십 초 걸릴 수 있어(모델 로딩) 진행 상태를 먼저 띄운다.
         showProgress(title: String(localized: "텍스트 인식 중…"),
                       body: String(localized: "화면의 글자를 읽고 있습니다"))
-        FileLog.log("OCR 시작")
+        AppLog.log("OCR 시작")
 
         // OCR 실패를 번역 실패와 분리 — "인식이 안 됐어" 와 "번역이 안 됐어" 는 원인이 다르다
         let lines: [OCRLine]
         do {
             lines = try await ocr.recognize(img)
         } catch {
-            FileLog.log("OCR 실패 \(error)")
+            AppLog.log("OCR 실패 \(error)")
             DebugLogger.shared.error(code: "E-MAC-OCR-0001", "OCR 실패 \(error)")
             cardMode = .error
             cardAction = .none
@@ -900,7 +900,7 @@ final class AppCoordinator: ObservableObject {
         }
 
         let joined = lines.map(\.text).joined(separator: "\n")
-        FileLog.log("OCR 완료 \(lines.count)줄")
+        AppLog.log("OCR 완료 \(lines.count)줄")
         guard !joined.isEmpty else {
             cardMode = .message
             cardAction = .none
@@ -913,13 +913,13 @@ final class AppCoordinator: ObservableObject {
         latestText = joined
         showProgress(title: String(localized: "번역 중…"),
                       body: String(localized: "온디바이스 번역을 준비하고 있습니다"))
-        FileLog.log("번역 시작: \(joined.prefix(30))")
+        AppLog.sensitive("번역 입력", joined)
 
         let out: String
         do {
             out = try await translator.translate(joined, polite: AppSettings.shared.politeTone)
         } catch PickBeonError.trans(_, let code) where code == "E-MAC-TRANS-0005" {
-            FileLog.log("번역 언어팩 미설치")
+            AppLog.log("번역 언어팩 미설치")
             cardMode = .error
             cardAction = .openLanguageSettings
             cardTitle = String(localized: "⚠ 번역 언어팩 필요")
@@ -927,7 +927,7 @@ final class AppCoordinator: ObservableObject {
             showResultCard()
             return
         } catch {
-            FileLog.log("번역 실패 \(error)")
+            AppLog.log("번역 실패 \(error)")
             DebugLogger.shared.error(code: "E-MAC-TRANS-0001", "번역 실패 \(error)")
             cardMode = .error
             cardAction = .retryTranslate
@@ -937,7 +937,7 @@ final class AppCoordinator: ObservableObject {
             return
         }
 
-        FileLog.log("번역 완료")
+        AppLog.log("번역 완료")
         latestTranslated = out
         PasteboardService.write(text: out)
         if let ctx = modelContext {
@@ -1147,7 +1147,7 @@ final class AppCoordinator: ObservableObject {
         let mouse = NSEvent.mouseLocation
         Task {
             guard let sel = await AXSelectionReader.readSelectedTextWithFallback(), !sel.isEmpty else {
-                FileLog.log("선택 텍스트 없음")
+                AppLog.log("선택 텍스트 없음")
                 cardMode = .message
                 cardAction = .none
                 cardTitle = String(localized: "선택된 텍스트 없음")
@@ -1155,7 +1155,7 @@ final class AppCoordinator: ObservableObject {
                 showResultCard(nearMouse: mouse)
                 return
             }
-            FileLog.log("선택 번역: \(sel.prefix(30))")
+            AppLog.sensitive("선택 입력", sel)
             do {
                 let out = try await translator.translate(sel, polite: AppSettings.shared.politeTone)
                 latestText = sel; latestTranslated = out
@@ -1163,7 +1163,7 @@ final class AppCoordinator: ObservableObject {
                 if let ctx = modelContext { clipboard.add(text: sel, translated: out, context: ctx) }
                 routeAfterCapture(nearMouse: mouse)
             } catch {
-                FileLog.log("선택 번역 실패 \(error)")
+                AppLog.log("선택 번역 실패 \(error)")
                 cardMode = .error
                 cardAction = .retryTranslate
                 cardTitle = String(localized: "⚠ 번역 실패")
@@ -1173,13 +1173,14 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - DebugPanel (Cmd+Shift+D)
+    // MARK: - DebugPanel (⌘⇧D / 우클릭)
     func showDebug() {
         if debugWindow != nil { debugWindow?.makeKeyAndOrderFront(nil); return }
+        AppLog.flushNow()
         let w = NSWindow(contentViewController: NSHostingController(rootView: DebugPanelView()))
-        w.styleMask = [.titled, .closable]
+        w.styleMask = [.titled, .closable, .resizable]
         w.title = "DebugPanel"
-        w.setContentSize(NSSize(width: 320, height: 140))
+        w.setContentSize(NSSize(width: 520, height: 460))
         w.isReleasedWhenClosed = false
         WindowDropper.attach(to: w) { [weak self] in self?.debugWindow = nil }
         debugWindow = w

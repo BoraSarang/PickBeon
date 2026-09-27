@@ -29,7 +29,7 @@ final class OCRService: ObservableObject {
         let want = ["ko-KR", "en-US", "ja-JP", "zh-Hans", "zh-Hant", "de-DE", "fr-FR", "es-ES"]
         let available = Set((try? VNRecognizeTextRequest().supportedRecognitionLanguages()) ?? [])
         let usable = want.filter { available.contains($0) }
-        FileLog.log("OCR 인식 언어 \(usable.joined(separator: ",")) (지원 \(available.count)개)")
+        AppLog.log("OCR 인식 언어 \(usable.joined(separator: ",")) (지원 \(available.count)개)")
         return usable.isEmpty ? ["en-US"] : usable
     }()
 
@@ -39,12 +39,12 @@ final class OCRService: ObservableObject {
         }
         let started = CACurrentMediaTime()
         DebugLogger.shared.info(feature: "OCR", "Vision 인식 시작 \(cg.width)x\(cg.height)px")
-        FileLog.log("OCR 시작 \(cg.width)x\(cg.height)px langs=\(Self.recognitionLanguages.joined(separator: ","))")
+        AppLog.log("OCR 시작 \(cg.width)x\(cg.height)px langs=\(Self.recognitionLanguages.joined(separator: ","))")
 
         let out = try await Self.perform(cg: cg)
 
         let ms = (CACurrentMediaTime() - started) * 1000
-        FileLog.log("OCR 완료 \(out.count)줄 \(String(format: "%.0f", ms))ms")
+        AppLog.log("OCR 완료 \(out.count)줄 \(String(format: "%.0f", ms))ms")
         DebugLogger.shared.cache("OCR \(out.count)줄 \(String(format: "%.0f", ms))ms")
         lines = out
         return out
@@ -58,7 +58,7 @@ final class OCRService: ObservableObject {
                     queue.async {
                         let req = VNRecognizeTextRequest { req, error in
                             if let error {
-                                FileLog.log("Vision 오류 \(error.localizedDescription)")
+                                AppLog.log("Vision 오류 \(error.localizedDescription)")
                                 cont.resume(throwing: PickBeonError.ocr("Vision 인식 오류", code: "E-MAC-OCR-0001"))
                                 return
                             }

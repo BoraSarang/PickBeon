@@ -59,12 +59,12 @@ enum PasteboardService {
             wroteAnything = true
         }
         guard wroteAnything else {
-            FileLog.log("Pasteboard 쓰기 대상 없음 — 무시")
+            AppLog.log("Pasteboard 쓰기 대상 없음 — 무시")
             return false
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([item])
-        FileLog.log("Pasteboard 기록: text=\(text != nil) png=\(imagePNG != nil || image != nil) gif=\(gifData != nil) file=\(fileURL != nil)")
+        AppLog.log("Pasteboard 기록: text=\(text != nil) png=\(imagePNG != nil || image != nil) gif=\(gifData != nil) file=\(fileURL != nil)")
         return true
     }
 

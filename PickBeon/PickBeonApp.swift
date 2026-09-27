@@ -68,6 +68,10 @@ struct PickBeonApp: App {
             Task { @MainActor in await UpdateCenter.shared.maybeAutoCheckForUpdate() }
         }
 
+        func applicationWillTerminate(_ notification: Notification) {
+            AppLog.flushNow()
+        }
+
         @objc private func togglePopover(_ sender: AnyObject?) {
             if NSApp.currentEvent?.type == .rightMouseUp {
                 AppCoordinator.shared.showDebug()
