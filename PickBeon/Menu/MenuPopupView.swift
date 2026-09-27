@@ -16,6 +16,7 @@ struct MenuPopupView: View {
     @ObservedObject var coordinator: AppCoordinator
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var updateCenter = UpdateCenter.shared
+    @ObservedObject private var hotkeys = AppSettings.shared
     @State private var tab: HubTab = .pick
     @State private var justCopied = false
 
@@ -83,15 +84,15 @@ struct MenuPopupView: View {
         VStack(spacing: 6) {
             primaryPickButton
             MRow(icon: "text.cursor", title: String(localized: "텍스트 선택 번역"),
-                 sub: String(localized: "드래그한 문장으로 바로 번역"), kbd: "⌘⌥Z") {
+                 sub: String(localized: "드래그한 문장으로 바로 번역"), kbd: hotkeys.hotKey(for: .translateSelection).display) {
                 coordinator.menuAction { coordinator.translateSelection() }
             }
             MRow(icon: "doc.on.doc", title: String(localized: "텍스트 바로 복사"),
-                 sub: String(localized: "영역 OCR → 클립보드"), kbd: "⌥⌘C") {
+                 sub: String(localized: "영역 OCR → 클립보드"), kbd: hotkeys.hotKey(for: .quickCopy).display) {
                 coordinator.menuAction { coordinator.startQuickCopy() }
             }
             MRow(icon: "macwindow.on.rectangle", title: String(localized: "창 캡쳐"),
-                 sub: String(localized: "창을 클릭해 캡쳐"), kbd: "⌥⌘W") {
+                 sub: String(localized: "창을 클릭해 캡쳐"), kbd: hotkeys.hotKey(for: .windowCapture).display) {
                 coordinator.menuAction { coordinator.startWindowCapture() }
             }
             MRow(icon: "rectangle.dashed", title: String(localized: "Same area"),
@@ -103,7 +104,7 @@ struct MenuPopupView: View {
             }
             MRow(icon: "video", title: String(localized: "GIF 녹화"),
                  sub: String(localized: "영역 선택 후 녹화 버튼"),
-                 kbd: "⌥⌘G") {
+                 kbd: hotkeys.hotKey(for: .gif).display) {
                 coordinator.menuAction { coordinator.startGifCapture() }
             }
             latestRow
@@ -134,7 +135,7 @@ struct MenuPopupView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                Text("⌘⇧X")
+                Text(hotkeys.hotKey(for: .capture).display)
                     .font(Theme.font(11, weight: .semibold, mono: true))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 7).padding(.vertical, 4)

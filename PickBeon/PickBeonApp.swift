@@ -55,7 +55,7 @@ struct PickBeonApp: App {
             hk.onGifCapture = { Task { @MainActor in AppCoordinator.shared.startGifCapture() } }
             hk.onQuickCopy = { Task { @MainActor in AppCoordinator.shared.startQuickCopy() } }
             hk.onWindowCapture = { Task { @MainActor in AppCoordinator.shared.startWindowCapture() } }
-            hk.registerDefaults()
+            hk.registerConfigured()
             Task { @MainActor in await UpdateCenter.shared.maybeAutoCheckForUpdate() }
             DebugLogger.shared.info(feature: "App", "메뉴바 상주 시작")
         }

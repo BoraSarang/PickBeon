@@ -12,6 +12,11 @@ struct SettingsView: View {
     @State private var resetNonce = 0
     /// 업데이트 확인 대상 저장소 (기본값 = ReleaseChecker.defaultRepository)
     @State private var repoSlug = ReleaseChecker.repository
+    /// 단축키 편집 상태
+    @ObservedObject private var hotkeys = GlobalHotKeyService.shared
+    @State private var recording: GlobalHotKeyService.Action?
+    @State private var recorderFocus: GlobalHotKeyService.Action?
+    @State private var hotKeyNonce = 0
 
     private let navs: [(Int, String, String)] = [
         (0, "scissors", "캡쳐"),
@@ -117,7 +122,7 @@ struct SettingsView: View {
                 SCard(String(localized: "번역 박스 기본 표시"), String(localized: "에디터에서 Vision 박스 켜기")) {
                     Toggle("", isOn: $s.overlayOn).labelsHidden().tint(Theme.accent)
                 }
-                SCard(String(localized: "GIF 프레임레이트"), String(localized: "⌥⌘G 녹화 fps (4~30)")) {
+                SCard(String(localized: "GIF 프레임레이트"), String(localized: "\(s.hotKey(for: .gif).display) 녹화 fps (4~30)")) {
                     Picker("", selection: $s.gifFps) {
                         Text("8").tag(8)
                         Text("10").tag(10)
@@ -170,18 +175,16 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 4)
             } else if sel == 2 {
-                SHead(String(localized: "단축키"), String(localized: "전역 단축키 (Carbon, 추가 권한 없음)."))
-                SCard(String(localized: "영역 Pick"), "") { KeyCap(text: "⌘⇧X") }
-                SCard(String(localized: "텍스트 선택 번역"), "") { KeyCap(text: "⌘⌥Z") }
-                SCard(String(localized: "GIF 녹화 / 중지"), "") { KeyCap(text: "⌥⌘G") }
-                SCard(String(localized: "텍스트 바로 복사"), String(localized: "OCR → 클립보드")) { KeyCap(text: "⌥⌘C") }
-                SCard(String(localized: "창 캡쳐"), String(localized: "창 클릭 선택")) { KeyCap(text: "⌥⌘W") }
-                SCard(String(localized: "오버레이: 마지막 영역"), "") { KeyCap(text: "R") }
-                SCard(String(localized: "오버레이: 확정(번역)"), "") { KeyCap(text: "Enter") }
-                SCard(String(localized: "오버레이: 즉시 번역"), String(localized: "드래그 중 누르기")) { KeyCap(text: "⌥ + 드래그") }
-                SCard(String(localized: "오버레이: 취소"), "") { KeyCap(text: "Esc") }
-                SCard(String(localized: "기록 붙여넣기"), "") { KeyCap(text: "⌘1~5") }
-            } else if sel == 3 {
+                SHead(String(localized: "단축키"), String(localized: "전역 단축키 (Carbon, 추가 권한 없음). 모두 직접 바꿀 수 있습니다."))
+                hotKeyEditor
+                SHead(String(localized: "오버레이 안에서만 동작"), String(localized: "캡쳐 중 오버레이가 떠 있을 때만 유효"))
+                    .padding(.top, 6)
+                SCard(String(localized: "마지막 영역"), "") { KeyCap(text: "R") }
+                SCard(String(localized: "확정(번역)"), "") { KeyCap(text: "⏎") }
+                SCard(String(localized: "즉시 번역"), String(localized: "드래그 중 누르기")) { KeyCap(text: "⌥ + 드래그") }
+                SCard(String(localized: "취소"), "") { KeyCap(text: "esc") }
+                SCard(String(localized: "기록 붙여넣기"), String(localized: "기록 팝업에서만")) { KeyCap(text: "⌘1~5") }
+
                 SHead(String(localized: "기록"), String(localized: "클립보드 + 번역 히스토리 보관."))
                 SCard(String(localized: "저장 개수"), String(localized: "핀은 개수에서 제외")) {
                     Picker("", selection: $s.historyLimitRaw) {
@@ -316,11 +319,139 @@ struct SettingsView: View {
     private func performReset() {
         guard let id = Bundle.main.bundleIdentifier else { return }
         UserDefaults.standard.removePersistentDomain(forName: id)
+        // 제거된 단축키 슬롯을 기본값으로 되돌리고 Carbon 핸들도 다시 건다.
+        // (UserDefaults 만 비우면 등록된 핫키가 옛 조합으로 남는다)
+        GlobalHotKeyService.shared.apply(s)
         // 실행 중인 @AppStorage 값을 즉시 반영시키기 위해 뷰 트리거
         resetNonce &+= 1
+        hotKeyNonce &+= 1
         search = ""
         sel = 0
         FileLog.log("설정 초기화 실행 (\(id)) nonce=\(resetNonce)")
+    }
+
+    // MARK: 단축키 편집 (2026-09-27 전부 사용자 지정 가능)
+    @ViewBuilder
+    private var hotKeyEditor: some View {
+        VStack(spacing: 6) {
+            ForEach(GlobalHotKeyService.Action.allCases) { action in
+                hotKeyRow(action)
+            }
+            HStack {
+                Button(String(localized: "모두 기본값으로")) {
+                    s.resetAllHotKeys()
+                    GlobalHotKeyService.shared.apply(s)
+                    recording = nil
+                    hotKeyNonce &+= 1
+                }
+                .font(Theme.font(11.5))
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.accent)
+                Spacer()
+                Text(String(localized: "변경을 누른 뒤 키 조합을 누르세요 · esc 취소"))
+                    .font(Theme.font(11))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func hotKeyRow(_ action: GlobalHotKeyService.Action) -> some View {
+        let binding = s.hotKey(for: action)
+        let isRecordingNow = (recording == action)
+        let reserved = HotKeyBinding.systemReserved[binding.display]
+        let duplicated = GlobalHotKeyService.Action.allCases
+            .filter { $0 != action && s.hotKey(for: $0) == binding }
+            .map(\.title)
+        let failed = hotkeys.failedActions.contains(action)
+
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.title)
+                    .font(Theme.font(13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                if failed {
+                    Label(String(localized: "등록 실패 — 다른 앱이 사용 중"), systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.font(10.5, weight: .semibold))
+                        .foregroundStyle(Theme.danger)
+                } else if !duplicated.isEmpty {
+                    Text("\(duplicated.joined(separator: ", ")) 와 중복")
+                        .font(Theme.font(10.5, weight: .semibold))
+                        .foregroundStyle(Theme.warn)
+                } else if let reserved {
+                    Text("macOS 기본 단축키(\(reserved)) 와 겹칠 수 있음")
+                        .font(Theme.font(10.5))
+                        .foregroundStyle(Theme.warn)
+                } else {
+                    Text(action.subtitle)
+                        .font(Theme.font(11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            Spacer(minLength: 6)
+            ZStack {
+                if isRecordingNow {
+                    Text(String(localized: "키를 누르세요…"))
+                        .font(Theme.font(11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 108, height: 26)
+                        .background(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.rChip))
+                        .overlay(
+                            HotKeyRecorderView(isRecording: true) { captured in
+                                applyCaptured(captured, to: action)
+                            }
+                            .frame(width: 108, height: 26)
+                        )
+                        .onAppear { recorderFocus = action }
+                } else {
+                    HStack(spacing: 6) {
+                        KeyCap(text: binding.display)
+                        Button(String(localized: "변경")) { recording = action }
+                            .font(Theme.font(11))
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.accent)
+                            .onHover { h in NSCursor.pointingHand.set(); if !h { NSCursor.arrow.set() } }
+                    }
+                }
+            }
+            Button {
+                s.resetHotKey(for: action)
+                GlobalHotKeyService.shared.apply(s)
+                hotKeyNonce &+= 1
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "이 항목만 기본값으로"))
+        }
+        .padding(11)
+        .background(failed ? Theme.danger.opacity(0.08) : Theme.row)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rCard))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rCard).stroke(Theme.line, lineWidth: 1))
+        .padding(.bottom, 6)
+        .id(hotKeyNonce)
+    }
+
+    private func applyCaptured(_ captured: HotKeyBinding?, to action: GlobalHotKeyService.Action) {
+        defer { recording = nil }
+        guard let captured else { return }   // esc 취소
+        guard captured.isValid else { NSSound.beep(); return }
+        // 앱 내 중복은 막는다 (동일 조합은 한쪽만 등록된다)
+        if let other = GlobalHotKeyService.Action.allCases.first(where: {
+            $0 != action && s.hotKey(for: $0) == captured
+        }) {
+            NSSound.beep()
+            FileLog.log("단축키 중복 거부 \(captured.display) — \(other.rawValue) 와 동일")
+            return
+        }
+        s.setHotKey(captured, for: action)
+        GlobalHotKeyService.shared.apply(s)
+        hotKeyNonce &+= 1
+        FileLog.log("단축키 변경 \(action.rawValue) = \(captured.display)")
     }
 
     private var updateStatusLabel: some View {
