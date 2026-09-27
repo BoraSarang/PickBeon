@@ -1,28 +1,23 @@
-# TODO — PickBeon v0.5
-- [x] 리디자인 P5 팝오버 A안 (2탭, overflow 차단, contentSize)
-- [x] 리디자인 P6 전체검색 미리보기 pin
-- [x] 리디자인 P7 Blue 팔레트 + hover 대비
-- [x] 리디자인 빌드 ERROR 0 (P5~P7)
-- [x] 업데이트 가이드 적용: ReleaseChecker + UpdateCenter + 설정탭 + 팝오버 배너 + release.yml (GitHub repo push·tag는 사용자 몝)
-- [x] 히스토리 호버 미리보기 (전체검색 우측 + 팝오버 기록 피크)
-- [x] 리디자인 P1 Pick Hub 탭형 팝오버 (히어로 제거, glassStroke/rTab 토큰)
-- [x] 리디자인 P2 결과카드 헤더 없는 번역 스티커
-- [x] 리디자인 P3 툴바 번역 primary + Same area pill + 힌트바 갱신
-- [x] 리디자인 P4 전체검색 필터 + 하단 키보드 힌트
-- [ ] 리디자인 육안 검증 (팝오버 탭/카드/툴바/기록 필터) — 사용자 써보기 후 UI 개선 시기
-- [x] M4 T-01 Theme.swift 토큰 + 공용 컴포넌트 (custom 전환)
-- [x] M4 T-02 메뉴/온보딩/에디터/설정/툴바 스킨 (SF Symbols+호버, 하드코딩 0건)
-- [x] M5 T-03 결과카드 330px 시그니처 (3초 숨김/썸네일 드래그/핀)
-- [x] M5 T-04 히스토리 영속화 버그 (DB 로드 + limit 행 삭제)
-- [x] M5 T-05 히스토리 Raycast 패널 (커서근처/검색/핀/Cmd1~5/삭제)
-- [x] M5 T-06 오버레이 loupe + Option드래그 번역 + 프리즈 핸들 리사이즈
-- [x] M5 T-07 설정 가짜 토글 정리 + 검색 필터
-- [x] M5 T-08 단축키 ⌘⇧X/⌘⌥Z 통일
+# TODO — PickBeon v0.7
+- [x] A1 GIF 녹화 코드 + E2E 1~2차 (v0.6~0.6.2, pickbeon-pf4 재검증 보류)
+- [x] A2 드래그→텍스트 바로 복사 ⌥⌘C (pickbeon-76r, 2026-09-24)
+- [x] B3 윈도우 캡쳐 ⌥⌘W (pickbeon-2xc)
+- [x] B2 블러/모자이크 주석 (pickbeon-n3z)
+- [x] C1 GIF 프레임 번역 (pickbeon-2sp)
+- [x] GIF 핫키 keyCode F→G 수정 + 빌드 ERROR 0 (2026-09-24)
+- [ ] 사용자 일괄 재검증: A1(⌥⌘G) + A2(⌥⌘C) + B3(⌥⌘W) + B2(에디터 블러/모자이크) + C1(GIF 번역) → 통과 후 pf4/76r/2xc/n3z/2sp close
 - [ ] M1 사용자 검증 (캡쳐→번역 전체→⌘V, 박스 정렬) — 기존 P0 (pickbeon-6yo)
-- [x] M4/M5 사용자 육안 검증 (카드 마우스근처·유지, 에디터 우측패널, loupe 제거, 핸들/3초숨김/히스토리) — pickbeon-qir close
-- [x] feat/macos-m3 → main 병합 (pickbeon-17m, ff cc46215)
 - [ ] P2 보류: Dark/Tinted 아이콘, 단축키 커스텀, E2E, BYOK
 ## 완료 이력
+- [x] A1 GIF 녹화 코드 구현 T-01~T-05 (설정/단축키/GifRecorder/HUD/라우팅/메뉴/에러코드)
+- [x] A1 빌드 ERROR 0 + 앱 재실행 (pickbeon-pf4, 2026-09-24)
+- [x] A1 E2E 피드백 수정: 영역 유지+REC 테두리, HUD 260×52 고정, 앱창 스트림 제외, wall-clock 스로틀 (v0.6.1)
+- [x] A1 E2E 2차: 녹화 버튼 플로우, REC/HUD 경과시간, 에디터 첫프레임 (v0.6.2)
+- [x] 리디자인 육안 검증 + AES-256 암호화 + 런타임 UI 언어 전환 — 사용자 확인 완료 처리 (2026-09-24, 범위 종결)
+- [x] 리디자인 육안 검증 (팝오버 탭/카드/툴바/기록 필터) — 사용자 확인 완료 (2026-09-24)
+- [x] feat/macos-m3 → main 병합 (pickbeon-17m, ff cc46215)
+- [x] M4/M5 사용자 육안 검증 — pickbeon-qir close
+- [x] M4 T-01~T-02 / M5 T-03~T-08 (v0.4/v0.5)
 - [x] M3 에디터 완성 (확대/핀/말투/오버레이/주석) — v0.3
 - [x] M2 P1-1~P1-4 (통합/데드코드/중복/핀배열) — v0.2
 - [x] M1 P0-1~P0-5 결과카드/에디터/선택번역 — v0.1

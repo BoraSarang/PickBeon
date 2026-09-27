@@ -107,6 +107,33 @@ struct SettingsView: View {
                 SCard(String(localized: "번역 박스 기본 표시"), String(localized: "에디터에서 Vision 박스 켜기")) {
                     Toggle("", isOn: $s.overlayOn).labelsHidden().tint(Theme.accent)
                 }
+                SCard(String(localized: "GIF 프레임레이트"), String(localized: "⌥⌘G 녹화 fps (4~30)")) {
+                    Picker("", selection: $s.gifFps) {
+                        Text("8").tag(8)
+                        Text("10").tag(10)
+                        Text("15").tag(15)
+                        Text("20").tag(20)
+                    }
+                    .labelsHidden()
+                    .frame(width: 90)
+                    .tint(Theme.accent)
+                }
+                SCard(String(localized: "GIF 최대 시간"), String(localized: "초과 시 자동 중지")) {
+                    Picker("", selection: $s.gifMaxSeconds) {
+                        Text(String(format: String(localized: "%d초"), 10)).tag(10)
+                        Text(String(format: String(localized: "%d초"), 30)).tag(30)
+                        Text(String(localized: "무제한")).tag(0)
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                    .tint(Theme.accent)
+                }
+                SCard(String(localized: "GIF 후 클립보드 복사"), String(localized: "끄면 저장만")) {
+                    Toggle("", isOn: $s.gifAutoCopy).labelsHidden().tint(Theme.accent)
+                }
+                SCard(String(localized: "GIF 프레임 번역"), String(localized: "종료 후 주요 프레임 OCR→번역")) {
+                    Toggle("", isOn: $s.gifFrameTranslate).labelsHidden().tint(Theme.accent)
+                }
             } else if sel == 1 {
                 SHead(String(localized: "번역"), String(localized: "언어와 말투, 엔진."))
                 SCard(String(localized: "UI 언어"), String(localized: "기본은 시스템 언어 · 변경은 다음 실행 시 적용")) {
@@ -136,6 +163,9 @@ struct SettingsView: View {
                 SHead(String(localized: "단축키"), String(localized: "전역 단축키 (Carbon, 추가 권한 없음)."))
                 SCard(String(localized: "영역 Pick"), "") { KeyCap(text: "⌘⇧X") }
                 SCard(String(localized: "텍스트 선택 번역"), "") { KeyCap(text: "⌘⌥Z") }
+                SCard(String(localized: "GIF 녹화 / 중지"), "") { KeyCap(text: "⌥⌘G") }
+                SCard(String(localized: "텍스트 바로 복사"), String(localized: "OCR → 클립보드")) { KeyCap(text: "⌥⌘C") }
+                SCard(String(localized: "창 캡쳐"), String(localized: "창 클릭 선택")) { KeyCap(text: "⌥⌘W") }
                 SCard(String(localized: "오버레이: 마지막 영역"), "") { KeyCap(text: "R") }
                 SCard(String(localized: "오버레이: 확정(번역)"), "") { KeyCap(text: "Enter") }
                 SCard(String(localized: "오버레이: 즉시 번역"), String(localized: "드래그 중 누르기")) { KeyCap(text: "⌥ + 드래그") }

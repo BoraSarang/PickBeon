@@ -1,4 +1,27 @@
 # CHANGELOG
+## v0.7.0-macos A2/B3/B2/C1 백로그 (2026-09-24)
+- [macos] A2 텍스트 바로 복사 ⌥⌘C: 영역 드래그 → OCR → 클립보드 즉시 (TextSniper류, 번역 스킵, 결과카드)
+- [macos] B3 윈도우 캡쳐 ⌥⌘W: 창 hover 하이라이트 + 클릭 → SCContentFilter 독립 창 캡쳐 → 프리즈 툴바
+- [macos] B2 블러/모자이크 주석: 툴바 도구 2종, 미리보기(재질/격자), 복사·핀 시 CoreImage CIGaussianBlur/CIPixellate 합성
+- [macos] C1 GIF 프레임 번역: 종료 후 첫 프레임 OCR→번역, 결과카드 승격 + 히스토리 (설정 토글, 기본 on)
+- [macos] GIF 핫키 keyCode 3(F)→5(G) 수정 — 의도한 ⌥⌘G 실제 등록
+- [macos] 메뉴 Pick 탭: 텍스트 바로 복사·창 캡쳐 행, 설정 단축키/GIF 탭 표기 갱신, 빌드 ERROR 0
+## v0.6.2-macos A1 GIF 녹화 UX (2026-09-24)
+- [macos] 영역 선택 후 자동 녹화 제거 → 미리보기 프리즈 + '녹화' 툴바 버튼으로 시작 (Esc 취소)
+- [macos] 녹화 중 경과 시간: HUD 초 표시 + 오버레이 REC pill에 `● REC 3.2s WxH` 동시 표시
+- [macos] 종료 시 GIF 첫 프레임을 `latestImage`로 설정 — 결과카드 썸네일·에디터 이미지 노출
+- [macos] NSLock async 분리(snapshotCounts), QuartzCore import, CGImage? unwrap — 빌드 ERROR 0
+## v0.6.1-macos A1 GIF UI 수정 (2026-09-24)
+- [macos] 녹화 전후 선택 영역 유지: mouseUp 시 오버레이 닫지 않고 REC 테두리(빨강 2pt)+코너+● REC pill 유지, 종료 시 일괄 닫힘
+- [macos] HUD 잘림 수정: 패널 260×52 고정 + 선택 영역 바로 위 배치, fittingSize 왜곡 제거
+- [macos] SCStream에서 앱 윈도우(오버레이/HUD/카드) 제외 — GIF에 UI 미포함
+- [macos] 프레임 스로틀 PTS → wall-clock, queueDepth 8, frames 카운트 lock 직렬화 (이전 3프레임/9.7s 개선)
+## v0.6.0-macos A1 GIF 녹화 MVP (2026-09-24)
+- [macos] 단축키 ⌥⌘G 영역 GIF 녹화 (GifRecorder: SCStream → 영역 크롭 → ImageIO 증분 GIF, 최대변 800px, 프레임 상한 10000)
+- [macos] 흐름: 영역 드래그 → mouseUp 즉시 녹화(툴바 생략) → HUD(●REC+중지, Esc) → 클립보드 복사 + `~/Desktop/PickBeon/Pick ….gif` + 결과카드
+- [macos] 설정: GIF fps(기본 10), 최대시간(10/30/무제한, 기본 10초), 후 클립보드 복사 토글 + 단축키 탭 ⌥⌘G 표기
+- [macos] 메뉴 Pick 탭 GIF 녹화 행, 오버레이 GIF 힌트(드래그→GIF 녹화 시작), 에러 E-MAC-GIF-0001/0002/0003
+- [macos] 리서치 docs/RESEARCH_capture_apps.md + 계획 docs/plans/PLAN_v0.6_macos.md, 빌드 ERROR 0 (육안 E2E는 사용자 확인 후 close pickbeon-pf4)
 ## v0.5.1-macos UI/UX 재정리 + Blue 팔레트 (2026-09-22)
 - [macos] P5 메뉴 팝오버 A안: 기록 탭 제거(전체검색 전담), [Pick|설정] 2탭, 340×240 + contentSize 360×260, ScrollView overflow 차단, 최신 번역 1줄+복사/에디터
 - [macos] P6 전체검색: 행 탭=미리보기 pin(두 번째 탭=붙여넣기), Esc pin 해제, 힌트 갱신

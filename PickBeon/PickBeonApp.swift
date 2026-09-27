@@ -52,6 +52,9 @@ struct PickBeonApp: App {
             let hk = GlobalHotKeyService.shared
             hk.onCapture = { Task { @MainActor in AppCoordinator.shared.startCapture() } }
             hk.onTranslateSelection = { Task { @MainActor in AppCoordinator.shared.translateSelection() } }
+            hk.onGifCapture = { Task { @MainActor in AppCoordinator.shared.startGifCapture() } }
+            hk.onQuickCopy = { Task { @MainActor in AppCoordinator.shared.startQuickCopy() } }
+            hk.onWindowCapture = { Task { @MainActor in AppCoordinator.shared.startWindowCapture() } }
             hk.registerDefaults()
             Task { @MainActor in await UpdateCenter.shared.maybeAutoCheckForUpdate() }
             DebugLogger.shared.info(feature: "App", "메뉴바 상주 시작")

@@ -33,6 +33,22 @@ final class ScreenCaptureManager: ObservableObject {
         return ns
     }
 
+    /// B3: 개별 창 캡쳐 (자기 앱 창 제외 필터는 호출부 책임)
+    func captureWindow(_ window: SCWindow) async throws -> NSImage {
+        FileLog.log("창 캡쳐 \(window.title ?? "?") frame=\(window.frame)")
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let config = SCStreamConfiguration()
+        config.width = max(2, Int(window.frame.width * scale))
+        config.height = max(2, Int(window.frame.height * scale))
+        config.showsCursor = false
+        let cg = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        let ns = NSImage(cgImage: cg, size: window.frame.size)
+        lastImage = ns
+        FileLog.log("창 캡쳐 완료 \(cg.width)x\(cg.height)")
+        return ns
+    }
+
     // 8초 타임아웃 (메인 블로킹과 무관하게 동작)
     private nonisolated static func shot(display: SCDisplay, width: Int, height: Int) async throws -> CGImage {
         try await withThrowingTaskGroup(of: CGImage.self) { group in

@@ -7,4 +7,5 @@ enum PickBeonError: Error {
     case trans(String, code: String = "E-MAC-TRANS-0001")
     case store(String, code: String = "E-MAC-STORE-0001")
     case perm(String, code: String = "E-MAC-PERM-0001")
+    case gif(String, code: String = "E-MAC-GIF-0001")
 }

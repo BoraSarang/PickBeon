@@ -3,13 +3,16 @@ import Carbon.HIToolbox
 import AppKit
 
 // Carbon RegisterEventHotKey 기반 전역 단축키 (추가 권한 불필요).
-// 캡쳐 ⌘⇧X (keyCode 7, cmd+shift=768), 선택 번역 ⌘⌥Z (keyCode 6, cmd+opt=2304). PLAN_v0.1 부합.
+// ⌘⇧X (7/768), ⌘⌥Z (6/2304), ⌥⌘G (5/2304), ⌥⌘C A2 (8/2304), ⌥⌘W B3 (13/2304).
 @MainActor
 final class GlobalHotKeyService {
     static let shared = GlobalHotKeyService()
 
     var onCapture: (() -> Void)?
     var onTranslateSelection: (() -> Void)?
+    var onGifCapture: (() -> Void)?
+    var onQuickCopy: (() -> Void)?
+    var onWindowCapture: (() -> Void)?
 
     private static var callbacks: [UInt32: () -> Void] = [:]
     private static var refs: [EventHotKeyRef?] = []
@@ -22,7 +25,10 @@ final class GlobalHotKeyService {
         installHandlerOnce()
         register(signature: 1, keyCode: 7, modifiers: 768) { [weak self] in self?.onCapture?() }
         register(signature: 2, keyCode: 6, modifiers: 2304) { [weak self] in self?.onTranslateSelection?() }
-        DebugLogger.shared.info(feature: "HotKey", "전역 단축키 등록 ⌘⇧X/⌘⌥Z")
+        register(signature: 3, keyCode: 5, modifiers: 2304) { [weak self] in self?.onGifCapture?() }
+        register(signature: 4, keyCode: 8, modifiers: 2304) { [weak self] in self?.onQuickCopy?() }
+        register(signature: 5, keyCode: 13, modifiers: 2304) { [weak self] in self?.onWindowCapture?() }
+        DebugLogger.shared.info(feature: "HotKey", "전역 단축키 등록 ⌘⇧X/⌘⌥Z/⌥⌘G/⌥⌘C/⌥⌘W")
     }
 
     private func installHandlerOnce() {

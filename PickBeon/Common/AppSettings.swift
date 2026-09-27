@@ -19,8 +19,16 @@ final class AppSettings: ObservableObject {
     @AppStorage("overlayOn") var overlayOn: Bool = true
     @AppStorage("politeTone") var politeTone: Bool = true
     @AppStorage("afterCapture") var afterCapture: String = "card" // card, editor, clipboard
+    @AppStorage("gifFps") var gifFps: Int = 10
+    @AppStorage("gifMaxSeconds") var gifMaxSeconds: Int = 10 // 10 | 30 | 0=unlimited
+    @AppStorage("gifAutoCopy") var gifAutoCopy: Bool = true
+    /// C1: GIF 종료 후 주요 프레임 OCR→번역
+    @AppStorage("gifFrameTranslate") var gifFrameTranslate: Bool = true
 
     var historyLimit: HistoryLimit { HistoryLimit(rawValue: historyLimitRaw) ?? .n20 }
+    var gifMaxLabel: String {
+        gifMaxSeconds <= 0 ? String(localized: "무제한") : "\(gifMaxSeconds)초"
+    }
 
     func effectiveLocale() -> Locale {
         if uiLanguage == "system" { return Locale.autoupdatingCurrent }

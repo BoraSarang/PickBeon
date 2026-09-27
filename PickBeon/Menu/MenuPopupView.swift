@@ -84,12 +84,25 @@ struct MenuPopupView: View {
                  sub: String(localized: "드래그한 문장으로 바로 번역"), kbd: "⌘⌥Z") {
                 coordinator.menuAction { coordinator.translateSelection() }
             }
+            MRow(icon: "doc.on.doc", title: String(localized: "텍스트 바로 복사"),
+                 sub: String(localized: "영역 OCR → 클립보드"), kbd: "⌥⌘C") {
+                coordinator.menuAction { coordinator.startQuickCopy() }
+            }
+            MRow(icon: "macwindow.on.rectangle", title: String(localized: "창 캡쳐"),
+                 sub: String(localized: "창을 클릭해 캡쳐"), kbd: "⌥⌘W") {
+                coordinator.menuAction { coordinator.startWindowCapture() }
+            }
             MRow(icon: "rectangle.dashed", title: String(localized: "Same area"),
                  sub: coordinator.lastArea == .zero
                       ? String(localized: "아직 없음")
                       : "\(Int(coordinator.lastArea.width)) × \(Int(coordinator.lastArea.height)) · 이전 영역 복원",
                  kbd: nil) {
                 coordinator.menuAction { coordinator.repeatLastArea() }
+            }
+            MRow(icon: "video", title: String(localized: "GIF 녹화"),
+                 sub: String(localized: "영역 선택 후 녹화 버튼 · 붙여넣기"),
+                 kbd: "⌥⌘G") {
+                coordinator.menuAction { coordinator.startGifCapture() }
             }
             latestRow
             Spacer(minLength: 0)
@@ -99,37 +112,10 @@ struct MenuPopupView: View {
     }
 
     private var primaryPickButton: some View {
-        Button {
+        MRow(icon: "scissors", title: String(localized: "영역 Pick"),
+             sub: String(localized: "드래그하고 바로 번역 · 붙여넣기"), kbd: "⌘⇧X") {
             coordinator.menuAction { coordinator.startCapture() }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "scissors")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(Color.white.opacity(0.20))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(String(localized: "영역 Pick"))
-                        .font(Theme.font(14, weight: .bold))
-                    Text(String(localized: "드래그하고 바로 번역 · 붙여넣기"))
-                        .font(Theme.font(12))
-                        .opacity(0.9)
-                }
-                Spacer()
-                KeyCap(text: "⌘⇧X")
-            }
-            .foregroundStyle(.white)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.rCard)
-                    .fill(Theme.accent)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rCard))
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .animation(Theme.hoverFade, value: coordinator.lastArea)
     }
 
     // MARK: 최신 번역 한 줄

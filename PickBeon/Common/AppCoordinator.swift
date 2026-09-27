@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import SwiftData
 import ScreenCaptureKit
+import Combine
 
 // 전역 라우터: 메뉴 클릭 → NSWindow 직접 띄우기 (SwiftUI 상태 토글 아님).
 enum ResultMode {
@@ -44,6 +45,21 @@ final class AppCoordinator: ObservableObject {
     private var debugWindow: NSWindow?
     var dismissMenu: (() -> Void)?
     private var updateSheetWindow: NSWindow?
+
+    // GIF 녹화 (A1)
+    private var gifMode = false
+    private var gifRecorder: GifRecorder?
+    private var gifHudPanel: NSPanel?
+    private var gifEscMonitor: Any?
+    private var gifElapsedCancellable: AnyCancellable?
+    /// 영역 선택 완료 → 녹화 버튼 대기 중인 좌표
+    private var gifPendingRect: CGRect?
+    private var gifPendingDisplay: SCDisplay?
+    private var gifPendingPointSize: CGSize = .zero
+    /// A2: 영역 선택 → OCR → 클립보드 즉시 복사
+    private var quickCopyMode = false
+    /// B3: 창 클릭 캡쳐
+    private var windowPickMode = false
 
     func menuAction(_ work: @escaping () -> Void) {
         dismissMenu?()
@@ -121,9 +137,23 @@ final class AppCoordinator: ObservableObject {
 
     // MARK: - 캡쳐 오버레이 (화면당 1 AppKit 윈도우)
     /// restoreArea: 이전 영역(top-left)을 주면 열자마자 그 자리에 프리즈로 복원 (Same area)
-    func startCapture(restoreArea: CGRect? = nil) {
+    /// gifMode: true면 영역 선택 후 '녹화' 버튼으로 시작 (자동 녹화 아님)
+    /// quickCopy: true면 영역 선택 후 OCR → 클립보드 즉시 복사 (A2)
+    /// windowPick: true면 창 클릭 캡쳐 모드 (B3)
+    func startCapture(restoreArea: CGRect? = nil, gif: Bool = false,
+                      quickCopy: Bool = false, windowPick: Bool = false) {
+        // GIF 녹화 진행 중 일반 캡쳐 금지 (REC 오버레이 보호)
+        if gifRecorder != nil {
+            FileLog.log("GIF 진행 중 startCapture 무시 gif=\(gif)")
+            return
+        }
         guard permissions.screenRecordingOK else { showOnboarding(); return }
         closeOverlay()
+        gifMode = gif
+        quickCopyMode = quickCopy
+        windowPickMode = windowPick
+        gifPendingRect = nil
+        gifPendingDisplay = nil
         NSApp.activate(ignoringOtherApps: true)
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             // Esc만. R/Enter는 key 윈도우의 keyDown이 처리 (이중 실행 방지).
@@ -134,23 +164,44 @@ final class AppCoordinator: ObservableObject {
             do {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 DebugLogger.shared.info(feature: "Capture", "디스플레이 \(content.displays.count)개")
+                // B3: 창 후보 (자기 앱 제외, 너무 작은 창 제외)
+                let ownPID = ProcessInfo.processInfo.processIdentifier
+                let wins = content.windows.filter {
+                    $0.owningApplication?.processID != ownPID
+                        && $0.isOnScreen
+                        && $0.frame.width > 40 && $0.frame.height > 40
+                }
                 var shown = 0
                 var pending: [(CaptureOverlayController, SCDisplay, NSScreen)] = []
                 for screen in NSScreen.screens {
                     guard let id = screen.displayID,
                           let disp = content.displays.first(where: { $0.displayID == id }) else { continue }
-                    let ctl = CaptureOverlayController(screen: screen, display: disp)
-                    ctl.onSelect = { rect, display, pointSize in
-                        self.didSelectArea(rect, display: display, pointSize: pointSize, controller: ctl)
-                    }
-                    ctl.onPerform = { action, image in
-                        self.performAction(action, image: image)
-                    }
-                    ctl.onCancel = { self.closeOverlay() }
-                    ctl.onReuse = { self.repeatFromOverlay() }
-                    if self.lastArea != .zero {
-                        ctl.hasLastArea = true
-                        ctl.lastAreaLabel = "\(Int(self.lastArea.width))×\(Int(self.lastArea.height))"
+                    let ctl = CaptureOverlayController(screen: screen, display: disp,
+                                                       gifMode: gif, quickCopy: quickCopy,
+                                                       windowPick: windowPick)
+                    if windowPick {
+                        ctl.setWindowCandidates(wins)
+                        ctl.onWindowSelect = { [weak self, weak ctl] win in
+                            self?.didSelectWindow(win, controller: ctl)
+                        }
+                    } else {
+                        ctl.onSelect = { rect, display, pointSize in
+                            self.didSelectArea(rect, display: display, pointSize: pointSize, controller: ctl)
+                        }
+                        ctl.onPerform = { action, image in
+                            self.performAction(action, image: image)
+                        }
+                        ctl.onCancel = { self.closeOverlay() }
+                        ctl.onReuse = { self.repeatFromOverlay() }
+                        if gif {
+                            ctl.onGifRecord = { [weak self, weak ctl] in
+                                self?.confirmGifRecord(controller: ctl)
+                            }
+                        }
+                        if self.lastArea != .zero {
+                            ctl.hasLastArea = true
+                            ctl.lastAreaLabel = "\(Int(self.lastArea.width))×\(Int(self.lastArea.height))"
+                        }
                     }
                     pending.append((ctl, disp, screen))
                     shown += 1
@@ -198,6 +249,11 @@ final class AppCoordinator: ObservableObject {
 
     func closeOverlay() {
         if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }
+        gifMode = false
+        quickCopyMode = false
+        windowPickMode = false
+        gifPendingRect = nil
+        gifPendingDisplay = nil
         overlayControllers.forEach { $0.close() }
         overlayControllers = []
     }
@@ -206,9 +262,61 @@ final class AppCoordinator: ObservableObject {
     private var lastPointSize: CGSize = .zero
 
     func didSelectArea(_ rect: CGRect, display: SCDisplay, pointSize: CGSize, controller: CaptureOverlayController) {
+        // 녹화 중/대기 중 도착한 선택은 무시 (입력 가드 우회 방어)
+        if gifRecorder != nil {
+            FileLog.log("GIF 진행 중 onSelect 무시 rect=\(rect)")
+            return
+        }
         lastArea = rect
         lastDisplay = display
         lastPointSize = pointSize
+        // GIF 모드: 프리즈 미리보기 + '녹화' 툴바 대기 (자동 시작 아님)
+        if gifMode {
+            gifPendingRect = rect
+            gifPendingDisplay = display
+            gifPendingPointSize = pointSize
+            Task { [weak self, weak controller] in
+                guard let self else { return }
+                // 미리보기용 1회 캡쳐 (실패해도 녹화 버튼은 표시)
+                if let img = try? await self.capture.captureArea(rect, display: display, pointSize: pointSize) {
+                    self.latestImage = img
+                    await MainActor.run {
+                        guard self.overlayControllers.contains(where: { $0 === controller }) else { return }
+                        controller?.freeze(img)
+                    }
+                }
+                await MainActor.run {
+                    guard self.overlayControllers.contains(where: { $0 === controller }) else { return }
+                    controller?.enterGifReady()
+                }
+            }
+            return
+        }
+        // A2 quickCopy: 프리즈 + 즉시 OCR 복사 (툴바 선택 없음)
+        if quickCopyMode {
+            Task { [weak self, weak controller] in
+                guard let self else { return }
+                do {
+                    let img = try await self.capture.captureArea(rect, display: display, pointSize: pointSize)
+                    self.latestImage = img
+                    await MainActor.run {
+                        guard self.overlayControllers.contains(where: { $0 === controller }) else { return }
+                        controller?.freeze(img)
+                        // freeze → perform(.ocrCopy)가 onPerform로 라우팅됨
+                        controller?.performQuickCopyIfReady()
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.closeOverlay()
+                        self.cardMode = .error
+                        self.cardTitle = String(localized: "⚠ 캡쳐 실패")
+                        self.cardBody = String(localized: "화면 기록 권한이 필요합니다.")
+                        self.showResultCard()
+                    }
+                }
+            }
+            return
+        }
         // mouseUp 즉시 1회 캡쳐 → 정지 이미지로 교체 (오버레이 유지)
         Task { [weak self, weak controller] in
             guard let self else { return }
@@ -230,6 +338,27 @@ final class AppCoordinator: ObservableObject {
                     self.showResultCard()
                 }
             }
+        }
+    }
+
+    /// '녹화' 버튼 클릭 → REC 표시 + SCStream 시작
+    private func confirmGifRecord(controller: CaptureOverlayController?) {
+        guard gifRecorder == nil,
+              let rect = gifPendingRect,
+              let display = gifPendingDisplay else {
+            FileLog.log("GIF 녹화 확인 조건 미충족")
+            return
+        }
+        FileLog.log("GIF 녹화 버튼 클릭 rect=\(rect)")
+        gifMode = false
+        // 선택 Esc → 녹화 중에는 HUD Esc로 대체
+        if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }
+        let pointSize = gifPendingPointSize
+        gifPendingRect = nil
+        gifPendingDisplay = nil
+        controller?.beginGifRecording(rect: rect)
+        Task { [weak self] in
+            await self?.startGifRecording(rect: rect, display: display, pointSize: pointSize)
         }
     }
 
@@ -274,6 +403,38 @@ final class AppCoordinator: ObservableObject {
                 latestText = ""
             }
             showEditor()
+        case .ocrCopy:
+            latestImage = image
+            do {
+                let lines = try await ocr.recognize(image)
+                let text = lines.map(\.text).joined(separator: "\n")
+                guard !text.isEmpty else {
+                    cardMode = .message
+                    cardAction = .none
+                    cardTitle = String(localized: "텍스트 없음")
+                    cardBody = String(localized: "선택 영역에서 텍스트를 찾지 못했습니다.")
+                    showResultCard()
+                    return
+                }
+                latestText = text
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                if let ctx = modelContext {
+                    clipboard.add(text: text, translated: "", context: ctx)
+                }
+                cardMode = .message
+                cardAction = .none
+                cardTitle = String(localized: "텍스트 복사됨")
+                cardBody = String(format: "%d자 · ⌘V 로 붙여넣기", text.count)
+                showResultCard()
+                DebugLogger.shared.cache("A2 OCR 복사 \(text.count)자")
+            } catch {
+                cardMode = .error
+                cardAction = .none
+                cardTitle = String(localized: "⚠ OCR 실패")
+                cardBody = String(localized: "다시 시도해주세요.")
+                showResultCard()
+            }
         case .translate:
             latestImage = image
             await runTranslate(img: image)
@@ -384,6 +545,315 @@ final class AppCoordinator: ObservableObject {
         settingsWindow = w
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - GIF 녹화 (A1: ⌥⌘G)
+    /// 상태: idle | selecting(오버레이) | starting(start 미완) | recording | stopping
+    func startGifCapture() {
+        // 1) 실제 녹화 중 → 중지
+        if gifRecorder?.isRecording == true {
+            FileLog.log("GIF 단축키: 녹화 중 → 중지")
+            Task { await stopGifRecording() }
+            return
+        }
+        // 2) 시작 대기/정지 진행 중 (start 미완료) → 취소
+        if gifRecorder != nil {
+            FileLog.log("GIF 단축키: 시작/정지 대기 → 취소")
+            Task { await cancelPendingGif() }
+            return
+        }
+        // 3) 영역 선택/녹화 대기 중 → 취소
+        if gifMode || !overlayControllers.isEmpty {
+            FileLog.log("GIF 단축키: 선택/대기 중 → 취소")
+            closeOverlay()
+            return
+        }
+        guard permissions.screenRecordingOK else { showOnboarding(); return }
+        closeGifHud()
+        startCapture(gif: true)
+    }
+
+    // MARK: - A2: 텍스트 바로 복사 (⌥⌘C) — TextSniper류
+    func startQuickCopy() {
+        guard permissions.screenRecordingOK else { showOnboarding(); return }
+        if gifRecorder != nil { return }
+        if quickCopyMode || !overlayControllers.isEmpty {
+            closeOverlay()
+            return
+        }
+        startCapture(quickCopy: true)
+    }
+
+    // MARK: - B3: 윈도우 캡쳐 (⌥⌘W)
+    func startWindowCapture() {
+        guard permissions.screenRecordingOK else { showOnboarding(); return }
+        if gifRecorder != nil { return }
+        if windowPickMode || !overlayControllers.isEmpty {
+            closeOverlay()
+            return
+        }
+        startCapture(windowPick: true)
+    }
+
+    /// B3: 창 클릭 → 캡쳐 → 프리즈 툴바 (번역/복사/저장 등)
+    private func didSelectWindow(_ window: SCWindow, controller: CaptureOverlayController?) {
+        guard let screen = controller?.screen else { return }
+        FileLog.log("창 선택 \(window.title ?? "?") \(window.frame)")
+        Task { [weak self, weak controller, weak window] in
+            guard let self, let window else { return }
+            do {
+                let img = try await self.capture.captureWindow(window)
+                let primaryH = NSScreen.screens.first?.frame.maxY ?? 0
+                let cocoaMinY = primaryH - window.frame.maxY
+                let localBL = CGRect(x: window.frame.minX - screen.frame.minX,
+                                     y: cocoaMinY - screen.frame.minY,
+                                     width: window.frame.width, height: window.frame.height)
+                let tl = CGRect(x: localBL.minX,
+                                y: screen.frame.height - localBL.maxY,
+                                width: localBL.width, height: localBL.height)
+                self.lastArea = tl
+                self.lastDisplay = controller?.display
+                self.lastPointSize = screen.frame.size
+                self.latestImage = img
+                await MainActor.run {
+                    guard self.overlayControllers.contains(where: { $0 === controller }) else { return }
+                    controller?.freezeWindow(img, tlRect: tl)
+                }
+            } catch {
+                FileLog.log("창 캡쳐 실패 \(error)")
+                await MainActor.run {
+                    self.closeOverlay()
+                    self.cardMode = .error
+                    self.cardTitle = String(localized: "⚠ 창 캡쳐 실패")
+                    self.cardBody = String(localized: "화면 기록 권한이 필요합니다.")
+                    self.showResultCard()
+                }
+            }
+        }
+    }
+
+    /// start 완료 전 취소: 진행 중이면 stop, 아니면 정리
+    private func cancelPendingGif() async {
+        if let rec = gifRecorder {
+            if rec.isRecording {
+                await rec.stop()
+            } else {
+                // start await 중 — stop 호출 시 didStop false → 정상 stop 경로로 종료 유도
+                await rec.stop()
+            }
+        }
+        clearGifElapsed()
+        overlayControllers.forEach { $0.endGifRecording() }
+        closeGifHud()
+        closeOverlay()
+        gifRecorder = nil
+        gifPendingRect = nil
+        gifPendingDisplay = nil
+    }
+
+    private func startGifRecording(rect: CGRect, display: SCDisplay, pointSize: CGSize) async {
+        let s = AppSettings.shared
+        let rec = GifRecorder.prepare(areaPoints: rect, pointSize: pointSize, display: display,
+                                      fps: s.gifFps, maxSeconds: s.gifMaxSeconds)
+        gifRecorder = rec
+        FileLog.log("GIF 시작 진입 rect=\(rect) crop 준비")
+        showGifHud(recorder: rec)
+        observeGifElapsed(rec)
+        do {
+            try await rec.start(areaPoints: rect, pointSize: pointSize,
+                                fps: s.gifFps, maxSeconds: s.gifMaxSeconds) { [weak self] result in
+                Task { @MainActor in self?.finishGif(result) }
+            }
+            FileLog.log("GIF startCapture OK isRecording=\(rec.isRecording)")
+        } catch {
+            FileLog.log("GIF 시작 실패 \(error)")
+            clearGifElapsed()
+            overlayControllers.forEach { $0.endGifRecording() }
+            closeGifHud()
+            closeOverlay()
+            gifRecorder = nil
+            cardMode = .error
+            cardAction = .openScreenRecording
+            cardTitle = String(localized: "⚠ GIF 녹화 실패")
+            cardBody = String(localized: "화면 기록 권한이 필요합니다.")
+            showResultCard()
+        }
+    }
+
+    /// HUD/REC pill 경과 시간 연동
+    private func observeGifElapsed(_ rec: GifRecorder) {
+        clearGifElapsed()
+        gifElapsedCancellable = rec.$elapsed
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] t in
+                self?.overlayControllers.forEach { $0.updateGifElapsed(t) }
+            }
+    }
+
+    private func clearGifElapsed() {
+        gifElapsedCancellable?.cancel()
+        gifElapsedCancellable = nil
+    }
+
+    private func stopGifRecording() async {
+        await gifRecorder?.stop()
+    }
+
+    private func finishGif(_ result: Result<(data: Data, frames: Int, duration: TimeInterval), Error>) {
+        FileLog.log("GIF finish 시작 frames/duration=\(String(describing: try? result.get().frames))/\(String(describing: try? result.get().duration))")
+        // REC 표시만 해제 — closeOverlay는 아래에서 (finish 중 새 오버레이 실수 방지 위해 recorder 정리 후)
+        clearGifElapsed()
+        overlayControllers.forEach { $0.endGifRecording() }
+        closeGifHud()
+        gifRecorder = nil
+        gifPendingRect = nil
+        gifPendingDisplay = nil
+        closeOverlay()
+        switch result {
+        case .success(let r):
+            guard r.frames > 0 else {
+                cardMode = .message
+                cardAction = .none
+                cardTitle = String(localized: "GIF 없음")
+                cardBody = String(localized: "녹화된 프레임이 없습니다.")
+                showResultCard()
+                return
+            }
+            // 에디터/카드 썸네일: GIF 첫 프레임
+            if let first = NSImage(data: r.data) {
+                latestImage = first
+            }
+            var savedPath = ""
+            do {
+                let url = try saveGIF(r.data)
+                savedPath = url.path(percentEncoded: false)
+            } catch {
+                FileLog.log("GIF 저장 실패 \(error)")
+            }
+            if AppSettings.shared.gifAutoCopy {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.declareTypes([.fileURL, NSPasteboard.PasteboardType("com.compuserve.gif")], owner: nil)
+                pb.setData(r.data, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
+                if let item = savedPath.isEmpty ? nil : URL(fileURLWithPath: savedPath) as NSURL? {
+                    pb.writeObjects([item])
+                }
+            }
+            let fps = AppSettings.shared.gifFps
+            let playSec = Double(r.frames) / Double(max(fps, 1))
+            cardMode = .message
+            cardAction = .none
+            cardTitle = AppSettings.shared.gifAutoCopy
+                ? String(localized: "GIF 복사됨")
+                : String(localized: "GIF 저장됨")
+            cardBody = String(format: "%d프레임 · %.1fs 녹화 · %.1fs 재생 · ",
+                              r.frames, r.duration, playSec)
+                + (AppSettings.shared.gifAutoCopy ? String(localized: "⌘V · ") : "")
+                + savedPath
+            showResultCard()
+            DebugLogger.shared.cache("GIF 완료 \(r.frames) frames \(String(format: "%.1f", r.duration))s")
+            // C1: 주요 프레임 OCR → 번역 (결과카드 갱신, 실패 시 GIF 카드 유지)
+            if AppSettings.shared.gifFrameTranslate, let first = latestImage {
+                Task { await translateGifKeyFrames(first) }
+            }
+        case .failure(let err):
+            FileLog.log("GIF 실패 \(err)")
+            cardMode = .error
+            cardAction = .none
+            cardTitle = String(localized: "⚠ GIF 실패")
+            cardBody = String(localized: "다시 시도해주세요.")
+            showResultCard()
+        }
+    }
+
+    func saveGIF(_ data: Data) throws -> URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop/PickBeon", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        let url = dir.appendingPathComponent("Pick \(fmt.string(from: Date())).gif")
+        try data.write(to: url)
+        return url
+    }
+
+    // MARK: - C1: GIF 주요 프레임 OCR → 번역
+    /// 첫 프레임(및 중간 프레임이 있으면 1장 추가)에서 텍스트를 뽑아 번역해 결과카드에 덧붙임.
+    private func translateGifKeyFrames(_ image: NSImage) async {
+        do {
+            let lines = try await ocr.recognize(image)
+            let text = lines.map(\.text).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                FileLog.log("C1: GIF 프레임 텍스트 없음")
+                return
+            }
+            let out = try await translator.translate(text, polite: AppSettings.shared.politeTone)
+            latestText = text
+            latestTranslated = out
+            if let ctx = modelContext {
+                clipboard.add(text: text, translated: out, context: ctx)
+            }
+            // GIF 카드가 아직 떠 있으면 번역 카드로 승격
+            if cardMode == .message, cardTitle.contains("GIF") {
+                cardMode = .translation
+                cardAction = .none
+                showResultCard()
+            }
+            FileLog.log("C1: GIF 프레임 번역 완료 \(text.count)자")
+        } catch {
+            FileLog.log("C1: GIF 프레임 번역 실패 \(error)")
+        }
+    }
+
+    // MARK: GIF HUD (● REC + 중지)
+    private func showGifHud(recorder: GifRecorder) {
+        closeGifHud()
+        let v = GifHudView(recorder: recorder) { [weak self] in
+            Task { @MainActor in await self?.stopGifRecording() }
+        }
+        let host = NSHostingController(rootView: v)
+        // fittingSize가 0/왜곡 나는 문제 회피 — 콘텐츠 보다 여유 있는 고정 크기
+        host.view.frame = NSRect(x: 0, y: 0, width: 260, height: 52)
+        host.view.autoresizingMask = []
+        let panel = KeyableResultPanel(contentViewController: host)
+        panel.styleMask = [.nonactivatingPanel, .borderless]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isFloatingPanel = true
+        panel.level = .statusBar
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
+        panel.setContentSize(NSSize(width: 260, height: 52))
+        // 선택 영역 위 중앙 → 없으면 화면 상단 안쪽 (menu bar 아래 여백 확보)
+        let target = screenForCapture() ?? NSScreen.main
+        if let f = target?.visibleFrame, lastArea != .zero, let sf = target?.frame {
+            let areaTopY = sf.maxY - lastArea.minY // Cocoa: 영역 위쪽
+            let x = sf.minX + lastArea.midX - 130
+            var y = areaTopY + 14
+            if y + 52 > f.maxY { y = f.maxY - 52 - 12 }
+            y = max(f.minY + 12, y)
+            let clampedX = max(f.minX + 12, min(x, f.maxX - 260 - 12))
+            panel.setFrameOrigin(NSPoint(x: clampedX, y: y))
+        } else if let f = target?.visibleFrame {
+            panel.setFrameOrigin(NSPoint(x: f.midX - 130, y: f.maxY - 52 - 16))
+        } else { panel.center() }
+        gifHudPanel = panel
+        panel.orderFrontRegardless()
+        FileLog.log("GIF HUD 표시 origin=\(NSStringFromPoint(panel.frame.origin)) size=\(NSStringFromSize(panel.frame.size))")
+        gifEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            if e.keyCode == 53 {
+                Task { @MainActor in await self?.stopGifRecording() }
+                return nil
+            }
+            return e
+        }
+    }
+
+    private func closeGifHud() {
+        if let m = gifEscMonitor { NSEvent.removeMonitor(m); gifEscMonitor = nil }
+        gifHudPanel?.orderOut(nil)
+        gifHudPanel = nil
     }
 
     // MARK: - 파이프라인: OCR → 번역 → 복사 → afterCapture 라우팅

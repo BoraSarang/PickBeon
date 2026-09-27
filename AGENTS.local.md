@@ -20,6 +20,7 @@
 - 번역 엔진 MVP는 Apple Translation만. BYOK 자리만 예약, P1 이후 재검토
 - 클립보드 저장 기본 20개, 옵션 20/50/100/200/제한없음. 텍스트·이미지·암호화 토글
 - 캡쳐 엔진 ScreenCaptureKit 필수. CGWindowListCreateImage 금지
+- 소스 수정 후에는 `./build_and_run.sh debug macos`로 빌드 + 앱 재실행 필수 (`--no-open` 금지)
 
 ## 5. 디자인 토큰 (custom)
 - docs/DESIGN.md에 토큰(색/라운드/간격/타이포/모션) 정의, 코드는 Design/Theme.swift 단일 소스

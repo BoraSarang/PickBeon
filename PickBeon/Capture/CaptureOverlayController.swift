@@ -7,7 +7,7 @@ import ScreenCaptureKit
 // Same area: 이전 영역 프리즈 복원 → 핸들 조정 → 툴바 실행.
 
 enum CaptureAction {
-    case copy, save, pin, ocr, translate
+    case copy, save, pin, ocr, translate, ocrCopy
 }
 
 final class KeyableWindow: NSWindow {
@@ -23,13 +23,28 @@ final class CaptureOverlayController {
     var onPerform: ((CaptureAction, NSImage) -> Void)?
     var onCancel: (() -> Void)?
     var onReuse: (() -> Void)?
+    /// GIF 모드: 힌트바 문구 변경 + 영역 선택 후 '녹화' 툴바 대기
+    var gifMode = false
+    /// A2: 영역 선택 → OCR → 클립보드 즉시 복사 (툴바 없음)
+    var quickCopyMode = false
+    /// B3: 창 클릭 캡쳐 모드 — 마우스 아래 창 하이라이트, 클릭 시 onWindowSelect
+    var windowMode = false
+    /// B3: 클릭할 창 목록 (CG 전역 top-left 프레임)
+    var windowCandidates: [SCWindow] = []
+    /// B3: 창 클릭 완료
+    var onWindowSelect: ((SCWindow) -> Void)?
+    /// GIF 영역 선택 완료 — 녹화 버튼 대기 (자동 시작 아님)
+    private(set) var gifReady = false
+    /// GIF 녹화 중: 선택 영역 유지 + REC 표시 (툴바/힌트 숨김)
+    private(set) var gifRecording = false
+    /// '녹화' 버튼 클릭 시 호출
+    var onGifRecord: (() -> Void)?
 
     private var window: KeyableWindow!
     private var overlay: OverlayView!
     private var toolbar: NSPanel!
     private var hintbar: NSPanel!
     private let hintSize = NSSize(width: 520, height: 40)
-    private var toolbarSize = NSSize(width: 420, height: 42)
     private var pendingTranslate = false
     /// Same area 복원용: top-left 좌표 (show() 완료 후 적용)
     var pendingRestore: CGRect?
@@ -38,10 +53,14 @@ final class CaptureOverlayController {
     var lastAreaLabel = ""
     private var toolbarHost: NSHostingController<CaptureToolbarView>?
 
-    init(screen: NSScreen, display: SCDisplay) {
+    init(screen: NSScreen, display: SCDisplay, gifMode: Bool = false,
+         quickCopy: Bool = false, windowPick: Bool = false) {
         self.screen = screen
         self.display = display
         self.scale = screen.backingScaleFactor
+        self.gifMode = gifMode
+        self.quickCopyMode = quickCopy
+        self.windowMode = windowPick
 
         window = KeyableWindow(contentRect: screen.frame, styleMask: .borderless,
                                backing: .buffered, defer: false, screen: screen)
@@ -54,11 +73,13 @@ final class CaptureOverlayController {
         window.acceptsMouseMovedEvents = true
 
         overlay = OverlayView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        overlay.windowMode = windowPick
         overlay.onChange = { [weak self] sel in
             // 새 선택 시작(sel=nil) 시 이전 프리즈 이미지 폐기 — 재드래그 늘림 방지
             if sel == nil {
                 self?.frozenImage = nil
                 self?.pendingTranslate = false
+                self?.gifReady = false
             }
             self?.layoutPanels()
         }
@@ -69,6 +90,18 @@ final class CaptureOverlayController {
         }
         overlay.onPrimary = { [weak self] in self?.perform(action: .translate) }
         overlay.onResizeCommit = { [weak self] rect in self?.recropAfterResize(rect) }
+        overlay.onWindowClick = { [weak self] p in
+            guard let self, self.windowMode else { return }
+            // 로컬 bottom-left → Cocoa 전역 → CG 전역 top-left
+            let cocoaX = self.screen.frame.minX + p.x
+            let cocoaY = self.screen.frame.minY + p.y
+            let primaryH = NSScreen.screens.first?.frame.maxY ?? 0
+            let cgX = cocoaX
+            let cgY = primaryH - cocoaY
+            guard let hit = Self.topWindow(at: CGPoint(x: cgX, y: cgY),
+                                           in: self.windowCandidates) else { return }
+            self.onWindowSelect?(hit)
+        }
         window.contentView = overlay
 
         let host = NSHostingController(rootView: makeToolbarRoot())
@@ -83,9 +116,8 @@ final class CaptureOverlayController {
         toolbar.isReleasedWhenClosed = false
         toolbar.setContentSize(toolbarSize)
 
-        let hb = HintBarView()
+        let hb = HintBarView(gifMode: gifMode, quickCopy: quickCopyMode, windowPick: windowPick)
         hintbar = NSPanel(contentViewController: NSHostingController(rootView: hb))
-        hintbar.styleMask = [.borderless, .nonactivatingPanel]
         hintbar.isOpaque = false
         hintbar.backgroundColor = .clear
         hintbar.hasShadow = true
@@ -158,18 +190,113 @@ final class CaptureOverlayController {
     }
 
     func close() {
+        gifRecording = false
+        gifReady = false
         hintbar.orderOut(nil)
         toolbar.orderOut(nil)
         window.orderOut(nil)
+    }
+
+    private var toolbarSize: NSSize {
+        if gifMode { return NSSize(width: 210, height: 42) }
+        if quickCopyMode { return NSSize(width: 160, height: 42) }
+        return NSSize(width: 420, height: 42)
+    }
+
+    /// B3: CG 전역 좌표에서 가장 위쪽 온스크린 윈도우 (자기 앱 제외)
+    /// SCShareableContent.windows는 보통 front→back — 순회 첫 매칭이 최상단.
+    static func topWindow(at p: CGPoint, in windows: [SCWindow]) -> SCWindow? {
+        let own = ProcessInfo.processInfo.processIdentifier
+        return windows.first { w in
+            w.owningApplication?.processID != own
+                && w.isOnScreen
+                && w.frame.width > 40 && w.frame.height > 40
+                && w.frame.contains(p)
+        }
+    }
+
+    /// B3: 창 목록 갱신 후 오버레이에 후보 전달
+    func setWindowCandidates(_ wins: [SCWindow]) {
+        windowCandidates = wins
+        overlay.windowCandidates = wins
+        overlay.windowFrameCache = wins.compactMap { Self.localRect(of: $0, screen: screen) }
+        overlay.needsDisplay = true
+    }
+
+    /// SCWindow.frame (CG top-left 전역) → 로컬 bottom-left (오버레이 좌표계)
+    static func localRect(of w: SCWindow, screen: NSScreen) -> CGRect? {
+        let primaryH = NSScreen.screens.first?.frame.maxY ?? 0
+        let cocoaMinY = primaryH - w.frame.maxY
+        let local = CGRect(x: w.frame.minX - screen.frame.minX,
+                           y: cocoaMinY - screen.frame.minY,
+                           width: w.frame.width, height: w.frame.height)
+        let bounds = CGRect(origin: .zero, size: screen.frame.size)
+        let inter = local.intersection(bounds)
+        guard !inter.isNull, inter.width > 8, inter.height > 8 else { return nil }
+        return inter
+    }
+
+    /// GIF 영역 선택 완료 → '녹화' 툴바 표시 (스트림 시작 전)
+    func enterGifReady() {
+        guard !gifRecording else { return }
+        gifReady = true
+        overlay.capturing = false
+        overlay.needsDisplay = true
+        refreshToolbar()
+        layoutPanels()
+        FileLog.log("GIF 준비 완료 — 녹화 버튼 대기")
+    }
+
+    /// GIF 녹화 시작: rect는 top-left → overlay.sel은 bottom-left. 툴바/힌트 숨김, 입력 차단, REC 표시.
+    func beginGifRecording(rect: CGRect) {
+        gifRecording = true
+        gifReady = false
+        pendingTranslate = false
+        frozenImage = nil
+        overlay.recordingGIF = true
+        overlay.modeIdle()
+        // onSelect payload = top-left, OverlayView.sel = bottom-left (restoreSelection와 동일 변환)
+        overlay.sel = CGRect(x: rect.minX,
+                             y: overlay.bounds.height - rect.maxY,
+                             width: rect.width, height: rect.height)
+        overlay.capturing = false
+        overlay.needsDisplay = true
+        hintbar.orderOut(nil)
+        toolbar.orderOut(nil)
+        if window.isVisible == false {
+            window.makeKeyAndOrderFront(nil)
+        }
+        FileLog.log("GIF REC 표시 TL=\(rect) → BL=\(String(describing: overlay.sel))")
+    }
+
+    /// GIF 녹화 종료: REC 표시 해제 (오버레이 닫기는 AppCoordinator가 처리)
+    func endGifRecording() {
+        gifRecording = false
+        gifReady = false
+        overlay.recordingGIF = false
+        overlay.gifElapsed = 0
+        overlay.needsDisplay = true
+    }
+
+    /// HUD elapsed → REC pill 갱신
+    func updateGifElapsed(_ t: TimeInterval) {
+        guard gifRecording else { return }
+        overlay.gifElapsed = t
+        overlay.needsDisplay = true
     }
 
     private var frozenImage: NSImage?
 
     // mouseUp → 즉시 캡쳐 요청. option 보관(프리즈 후 즉시 번역).
     private func beginCapture(rect: CGRect, option: Bool) {
+        guard !gifRecording else {
+            FileLog.log("GIF 녹화 중 beginCapture 무시")
+            return
+        }
         guard rect.width > 10, rect.height > 10 else { return }
         pendingTranslate = option
         overlay.capturing = true
+        gifReady = false
         overlay.needsDisplay = true
         layoutPanels()
         let tl = CGRect(x: rect.minX, y: overlay.bounds.height - rect.maxY,
@@ -183,12 +310,31 @@ final class CaptureOverlayController {
         overlay.capturing = false
         overlay.frozenImage = image
         overlay.needsDisplay = true
-        if hasLastArea { refreshToolbar() }
+        if hasLastArea && !quickCopyMode { refreshToolbar() }
         layoutPanels()
         if pendingTranslate {
             pendingTranslate = false
             perform(action: .translate)
         }
+    }
+
+    /// A2: 프리즈 직후 OCR 복사 자동 실행 (사용자 툴바 선택 없음)
+    func performQuickCopyIfReady() {
+        guard quickCopyMode else { return }
+        perform(action: .ocrCopy)
+    }
+
+    /// B3: 창 캡쳐 완료 → 프리즈 + 툴바 (sel = top-left)
+    func freezeWindow(_ image: NSImage, tlRect: CGRect) {
+        windowMode = false
+        overlay.windowMode = false
+        overlay.modeIdle()
+        overlay.sel = CGRect(x: tlRect.minX,
+                             y: overlay.bounds.height - tlRect.maxY,
+                             width: tlRect.width, height: tlRect.height)
+        hintbar.orderOut(nil)
+        freeze(image)
+        FileLog.log("창 프리즈 TL=\(tlRect)")
     }
 
     // 핸들 리사이즈 확정: loupe용 전체샷에서 로컬 crop (재캡쳐 없이 즉시)
@@ -203,8 +349,11 @@ final class CaptureOverlayController {
 
     private func makeToolbarRoot() -> CaptureToolbarView {
         CaptureToolbarView(
+            gifMode: gifMode,
+            quickCopy: quickCopyMode,
             onAction: { [weak self] a in self?.perform(action: a) },
-            showSameArea: hasLastArea,
+            onRecord: { [weak self] in self?.onGifRecord?() },
+            showSameArea: hasLastArea && !quickCopyMode && !gifMode,
             sameAreaSize: lastAreaLabel,
             onSameArea: { [weak self] in self?.onReuse?() }
         )
@@ -215,12 +364,37 @@ final class CaptureOverlayController {
     }
 
     private func perform(action: CaptureAction) {
+        guard !gifRecording, !gifReady else { return }
         guard let img = frozenImage,
               let rect = overlay.sel, rect.width > 10, rect.height > 10 else { return }
         onPerform?(action, img)
     }
 
+    /// 녹화 중/프리즈/빈 상태 레이아웃 — GIF REC 모드에서는 툴바·힌트 모두 숨김
     private func layoutPanels() {
+        if gifRecording {
+            hintbar.orderOut(nil)
+            toolbar.orderOut(nil)
+            return
+        }
+        toolbar.setContentSize(toolbarSize)
+        // GIF: 영역 선택 후 '녹화' 툴바 (프리즈 유무와 무관)
+        if gifMode, gifReady, let r = overlay.sel, r.width > 10, r.height > 10 {
+            hintbar.orderOut(nil)
+            var x = window.frame.origin.x + r.midX - toolbarSize.width / 2
+            var y = window.frame.origin.y + r.minY - toolbarSize.height - 12
+            x = max(screen.frame.minX + 8, min(x, screen.frame.maxX - toolbarSize.width - 8))
+            y = max(screen.frame.minY + 8, min(y, screen.frame.maxY - toolbarSize.height - 8))
+            toolbar.setFrameOrigin(NSPoint(x: x, y: y))
+            toolbar.orderFrontRegardless()
+            return
+        }
+        // A2 quickCopy: 프리즈 직후 ocrCopy 수행 — 툴바 노출 금지
+        if quickCopyMode {
+            hintbar.orderOut(nil)
+            toolbar.orderOut(nil)
+            return
+        }
         if frozenImage != nil,
            let r = overlay.sel, r.width > 10, r.height > 10 {
             hintbar.orderOut(nil)
@@ -247,9 +421,19 @@ final class OverlayView: NSView {
     var onReuse: (() -> Void)?
     var onPrimary: (() -> Void)?
     var onResizeCommit: ((CGRect) -> Void)?
+    var onWindowClick: ((CGPoint) -> Void)?
     var sel: CGRect?
     var capturing = false
     var frozenImage: NSImage?
+    /// GIF 녹화 중: 빨간 테두리 + REC pill
+    var recordingGIF = false
+    /// 녹화 경과 시간 (REC pill 표시용)
+    var gifElapsed: TimeInterval = 0
+    /// B3: 창 피킹 모드 — 하이라이트 + 클릭 캡쳐
+    var windowMode = false
+    var windowCandidates: [SCWindow] = []
+    /// 로컬 bottom-left 프레임 캐시 (인덱스는 windowCandidates와 동일)
+    var windowFrameCache: [CGRect?] = []
     var fullShot: CGImage? { didSet { needsDisplay = true } }
     private var anchor: CGPoint?
     private var cursor: CGPoint?
@@ -270,8 +454,15 @@ final class OverlayView: NSView {
     }
 
     override func mouseDown(with e: NSEvent) {
+        guard !recordingGIF else { return }
         let p = convert(e.locationInWindow, from: nil)
         cursor = p
+        if windowMode {
+            // 클릭 창 선택은 mouseUp에서 처리 (드래그와 구분)
+            mode = .select
+            anchor = p
+            return
+        }
         // 프리즈 후: 코너 핸들 근처면 리사이즈
         if frozenImage != nil, let r = sel, let h = handleAt(p, in: r) {
             mode = h
@@ -288,6 +479,7 @@ final class OverlayView: NSView {
     }
 
     override func mouseDragged(with e: NSEvent) {
+        guard !recordingGIF else { return }
         let p = convert(e.locationInWindow, from: nil)
         cursor = p
         switch mode {
@@ -307,8 +499,17 @@ final class OverlayView: NSView {
     }
 
     override func mouseUp(with e: NSEvent) {
+        guard !recordingGIF else {
+            mode = .none
+            resizeAnchor = nil
+            return
+        }
         let option = e.modifierFlags.contains(.option)
-        defer { mode = .none; resizeAnchor = nil }
+        defer { mode = .none; resizeAnchor = nil; anchor = nil }
+        if windowMode {
+            onWindowClick?(convert(e.locationInWindow, from: nil))
+            return
+        }
         switch mode {
         case .resizeTL, .resizeTR, .resizeBL, .resizeBR:
             if let r = sel, r.width > 10, r.height > 10 { onResizeCommit?(r) }
@@ -326,17 +527,21 @@ final class OverlayView: NSView {
     override func mouseMoved(with e: NSEvent) {
         cursor = convert(e.locationInWindow, from: nil)
         // 준비/드래그/리사이즈 중 크로스헤어 갱신
-        if shouldDrawCrosshair { needsDisplay = true }
+        if shouldDrawCrosshair || windowMode { needsDisplay = true }
     }
 
-    /// 준비 상태·드래그·핸들 조정 중 — 프리즈 유휴(툴바 뜬 상태)에서는 끔
+    /// 준비 상태·드래그·핸들 조정 중 — 프리즈 유휴/녹화 중에는 끔
     private var shouldDrawCrosshair: Bool {
-        guard cursor != nil, !capturing else { return false }
+        guard cursor != nil, !capturing, !recordingGIF else { return false }
         if frozenImage != nil && mode == .none { return false }
         return true
     }
 
     override func keyDown(with e: NSEvent) {
+        if recordingGIF {
+            if e.keyCode == 53 { onCancel?() } // Esc는 코디네이터가 중지로 라우팅
+            return
+        }
         switch e.keyCode {
         case 53: onCancel?()          // Esc
         case 15: onReuse?()           // R
@@ -380,6 +585,22 @@ final class OverlayView: NSView {
     // MARK: 그리기
     override func draw(_ dirtyRect: NSRect) {
         let dim = NSColor.black.withAlphaComponent(0.48)
+        if windowMode {
+            // 창 피킹: 전체 딤 + 커서 아래 창 하이라이트 + 힌트
+            dim.setFill(); bounds.fill()
+            if let c = cursor, let idx = hoverWindowIndex(at: c), let fr = windowFrameCache[idx] {
+                NSColor.systemBlue.withAlphaComponent(0.18).setFill()
+                fr.fill()
+                NSColor.systemBlue.setStroke()
+                let bp = NSBezierPath(rect: fr); bp.lineWidth = 2.5; bp.stroke()
+                // 하이라이트 안쪽 밝게
+                NSColor.white.withAlphaComponent(0.06).setFill()
+                fr.fill()
+                drawCoord("Window \(Int(fr.width))×\(Int(fr.height))", near: c)
+            }
+            drawCrosshair()
+            return
+        }
         guard let r = sel, r.width > 4, r.height > 4 else {
             dim.setFill(); bounds.fill()
             drawCrosshair()
@@ -390,8 +611,21 @@ final class OverlayView: NSView {
         path.windingRule = .evenOdd
         dim.setFill(); path.fill()
         // 유휴(프리즈 완료) 때만 이미지 표시. 핸들/재드래그 중에는 라이브 화면(투명 구멍) 유지
-        if let img = frozenImage, mode == .none {
+        if let img = frozenImage, mode == .none, !recordingGIF {
             img.draw(in: r)
+        }
+        if recordingGIF {
+            // 녹화 중: 빨간 테두리 + 코너 + REC pill (라이브 화면은 투명 구멍으로 노출)
+            NSColor.systemRed.setStroke()
+            let sp = NSBezierPath(rect: r); sp.lineWidth = 2; sp.stroke()
+            NSColor.systemRed.setFill()
+            for p in [NSPoint(x: r.minX, y: r.minY), NSPoint(x: r.maxX, y: r.minY),
+                      NSPoint(x: r.minX, y: r.maxY), NSPoint(x: r.maxX, y: r.maxY)] {
+                NSBezierPath(rect: CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9)).fill()
+            }
+            let time = String(format: "%.1fs", gifElapsed)
+            pill("● REC  \(time)  \(Int(r.width))×\(Int(r.height))", at: r, color: NSColor.systemRed)
+            return
         }
         NSColor.white.setStroke()
         let sp = NSBezierPath(rect: r); sp.lineWidth = 1.5; sp.stroke()
@@ -440,6 +674,14 @@ final class OverlayView: NSView {
         drawCoord("\(Int(c.x)), \(yTop)", near: c)
     }
 
+    /// B3: 커서 아래 창 인덱스 (로컬 프레임 포함 검사, front→back 첫 매칭)
+    private func hoverWindowIndex(at p: CGPoint) -> Int? {
+        for i in windowFrameCache.indices {
+            if let fr = windowFrameCache[i], fr.contains(p) { return i }
+        }
+        return nil
+    }
+
     private func drawCoord(_ text: String, near c: CGPoint) {
         let label = text as NSString
         let attrs: [NSAttributedString.Key: Any] = [
@@ -459,18 +701,19 @@ final class OverlayView: NSView {
         label.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
     }
 
-    private func pill(_ text: String, at r: CGRect) {
-        drawPill(text, origin: NSPoint(x: r.midX, y: max(8, r.minY - 26)), centered: true)
+    private func pill(_ text: String, at r: CGRect, color: NSColor? = nil) {
+        drawPill(text, origin: NSPoint(x: r.midX, y: max(8, r.minY - 26)), centered: true, color: color)
     }
     private func pillAtTop(_ text: String, at r: CGRect) {
-        drawPill(text, origin: NSPoint(x: r.midX, y: r.maxY + 8), centered: true)
+        drawPill(text, origin: NSPoint(x: r.midX, y: r.maxY + 8), centered: true, color: nil)
     }
-    private func drawPill(_ text: String, origin: NSPoint, centered: Bool) {
+    private func drawPill(_ text: String, origin: NSPoint, centered: Bool, color: NSColor?) {
         let label = text as NSString
+        let bg = color ?? NSColor.black.withAlphaComponent(0.7)
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.7)]
+            .backgroundColor: bg]
         let s = label.size(withAttributes: attrs)
         let x = centered ? origin.x - s.width / 2 : origin.x
         label.draw(at: NSPoint(x: x, y: origin.y), withAttributes: attrs)
@@ -478,17 +721,43 @@ final class OverlayView: NSView {
 }
 
 struct HintBarView: View {
+    var gifMode = false
+    var quickCopy = false
+    var windowPick = false
+
     var body: some View {
         HStack(spacing: 8) {
-            Text(String(localized: "드래그하여 선택")).font(Theme.font(12, weight: .semibold))
-            Divider().frame(height: 16)
-            Kbd("⏎"); Text(String(localized: "번역")).font(Theme.font(12)).foregroundColor(.secondary)
-            Divider().frame(height: 16)
-            Kbd("⌥"); Text(String(localized: "즉시 번역")).font(Theme.font(12)).foregroundColor(.secondary)
-            Divider().frame(height: 16)
-            Kbd("R"); Text(String(localized: "이전 영역")).font(Theme.font(12)).foregroundColor(.secondary)
-            Divider().frame(height: 16)
-            Kbd("Esc"); Text(String(localized: "취소")).font(Theme.font(12)).foregroundColor(.secondary)
+            if windowPick {
+                Text(String(localized: "창을 클릭")).font(Theme.font(12, weight: .semibold))
+                Divider().frame(height: 16)
+                Kbd("클릭"); Text(String(localized: "창 캡쳐")).font(Theme.font(12)).foregroundColor(.secondary)
+                Divider().frame(height: 16)
+                Kbd("Esc"); Text(String(localized: "취소")).font(Theme.font(12)).foregroundColor(.secondary)
+            } else if quickCopy {
+                Text(String(localized: "드래그하여 복사")).font(Theme.font(12, weight: .semibold))
+                Divider().frame(height: 16)
+                Kbd("드래그"); Text(String(localized: "OCR → 클립보드")).font(Theme.font(12)).foregroundColor(.secondary)
+                Divider().frame(height: 16)
+                Kbd("Esc"); Text(String(localized: "취소")).font(Theme.font(12)).foregroundColor(.secondary)
+            } else if gifMode {
+                Text(String(localized: "드래그하여 선택")).font(Theme.font(12, weight: .semibold))
+                Divider().frame(height: 16)
+                Kbd("드래그"); Text(String(localized: "영역 선택")).font(Theme.font(12)).foregroundColor(.secondary)
+                Divider().frame(height: 16)
+                Text(String(localized: "→ 녹화 버튼으로 시작")).font(Theme.font(12)).foregroundColor(.secondary)
+                Divider().frame(height: 16)
+                Kbd("Esc"); Text(String(localized: "취소")).font(Theme.font(12)).foregroundColor(.secondary)
+            } else {
+                Text(String(localized: "드래그하여 선택")).font(Theme.font(12, weight: .semibold))
+                Divider().frame(height: 16)
+                Kbd("⏎"); Text(String(localized: "번역")).font(Theme.font(12)).foregroundColor(.secondary)
+                Divider().frame(height: 16)
+                Kbd("⌥"); Text(String(localized: "즉시 번역")).font(Theme.font(12)).foregroundColor(.secondary)
+                Divider().frame(height: 16)
+                Kbd("R"); Text(String(localized: "이전 영역")).font(Theme.font(12)).foregroundColor(.secondary)
+                Divider().frame(height: 16)
+                Kbd("Esc"); Text(String(localized: "취소")).font(Theme.font(12)).foregroundColor(.secondary)
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
         .background(.ultraThinMaterial)
@@ -505,14 +774,81 @@ struct HintBarView: View {
 }
 
 struct CaptureToolbarView: View {
+    var gifMode = false
+    var quickCopy = false
     var onAction: (CaptureAction) -> Void
+    var onRecord: (() -> Void)? = nil
     var showSameArea: Bool = false
     var sameAreaSize: String = ""
     var onSameArea: (() -> Void)? = nil
     @State private var hover: CaptureAction?
     @State private var hoverSame = false
+    @State private var hoverRecord = false
+    @State private var hoverQuick = false
 
     var body: some View {
+        if gifMode {
+            gifRecordBar
+        } else if quickCopy {
+            quickCopyBar
+        } else {
+            captureBar
+        }
+    }
+
+    /// A2: 영역 확정 후 '복사' → OCR 즉시 클립보드 (번역 스킵)
+    private var quickCopyBar: some View {
+        HStack(spacing: 8) {
+            Button { onAction(.ocrCopy) } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "doc.on.doc").font(.system(size: 12, weight: .bold))
+                    Text(String(localized: "복사")).font(Theme.font(12, weight: .semibold))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(hoverQuick ? Theme.accent.opacity(0.9) : Theme.accent)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .contentShape(RoundedRectangle(cornerRadius: 9))
+            }
+            .buttonStyle(.plain)
+            .onHover { hoverQuick = $0 }
+            Text(String(localized: "Esc 취소"))
+                .font(Theme.font(11))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(5)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.white.opacity(0.14)))
+        .shadow(radius: 12)
+    }
+
+    /// GIF: 영역 확정 후 '녹화' 시작 (자동 시작 아님)
+    private var gifRecordBar: some View {
+        HStack(spacing: 8) {
+            Button { onRecord?() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "record.circle").font(.system(size: 12, weight: .bold))
+                    Text(String(localized: "녹화")).font(Theme.font(12, weight: .semibold))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(hoverRecord ? Color.red.opacity(0.95) : Color.red)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .contentShape(RoundedRectangle(cornerRadius: 9))
+            }
+            .buttonStyle(.plain)
+            .onHover { hoverRecord = $0 }
+            Text(String(localized: "Esc 취소"))
+                .font(Theme.font(11))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(5)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.white.opacity(0.14)))
+        .shadow(radius: 12)
+    }
+
+    private var captureBar: some View {
         HStack(spacing: 2) {
             TB(String(localized: "번역"), "character.bubble", .translate, primary: true)
             Rectangle().fill(Color.white.opacity(0.14)).frame(width: 1, height: 20)

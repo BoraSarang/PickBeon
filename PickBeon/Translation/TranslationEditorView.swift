@@ -1,14 +1,15 @@
 import SwiftUI
 import AppKit
+import CoreImage
 
 // 에디터: 좌 이미지(OCR박스+번역오버레이+주석) / 우 OCR·번역+말투토글. 캡쳐 후에만 열림.
-enum AnnotTool { case browse, pen, arrow, rect, text }
-enum AnnotKind { case pen, arrow, rect, note }
+enum AnnotTool { case browse, pen, arrow, rect, text, blur, mosaic }
+enum AnnotKind { case pen, arrow, rect, note, blur, mosaic }
 
 struct Annotation: Identifiable {
     let id = UUID()
     var kind: AnnotKind
-    var points: [CGPoint] // 정규화 top-left 좌표. pen=경로, arrow/rect=[시작,끝], note=[앵커]
+    var points: [CGPoint] // 정규화 top-left 좌표. pen=경로, arrow/rect/blur/mosaic=[시작,끝], note=[앵커]
     var text: String = ""
 }
 
@@ -69,6 +70,8 @@ struct TranslationEditorView: View {
             IconToolButton(systemName: "pencil.tip", tip: String(localized: "펜"), active: tool == .pen) { toggleTool(.pen) }
             IconToolButton(systemName: "arrow.up.right", tip: String(localized: "화살표"), active: tool == .arrow) { toggleTool(.arrow) }
             IconToolButton(systemName: "rectangle", tip: String(localized: "박스"), active: tool == .rect) { toggleTool(.rect) }
+            IconToolButton(systemName: "drop.halffull", tip: String(localized: "블러"), active: tool == .blur) { toggleTool(.blur) }
+            IconToolButton(systemName: "checkerboard.rectangle", tip: String(localized: "모자이크"), active: tool == .mosaic) { toggleTool(.mosaic) }
             IconToolButton(systemName: "textformat", tip: String(localized: "텍스트 (탭して 입력)"), active: tool == .text) { toggleTool(.text) }
             Rectangle().fill(Theme.line).frame(width: 1, height: 18).padding(.horizontal, 4)
             IconToolButton(systemName: "square.dashed", tip: String(localized: "OCR 박스 표시"), active: showBoxes) { showBoxes.toggle() }
@@ -201,6 +204,51 @@ struct TranslationEditorView: View {
                         .background(Color.red).foregroundColor(.white).clipShape(RoundedRectangle(cornerRadius: 6))
                         .position(p)
                 }
+            case .blur:
+                if pts.count >= 2 {
+                    redactPreview(pts, style: .blur)
+                }
+            case .mosaic:
+                if pts.count >= 2 {
+                    redactPreview(pts, style: .mosaic)
+                }
+            }
+        }
+    }
+
+    private enum RedactStyle { case blur, mosaic }
+
+    /// B2 미리보기: 실제 합성은 renderAnnotated에서 CoreImage로 수행
+    private func redactPreview(_ pts: [CGPoint], style: RedactStyle) -> some View {
+        let x0 = min(pts[0].x, pts[1].x), y0 = min(pts[0].y, pts[1].y)
+        let w = abs(pts[1].x - pts[0].x), h = abs(pts[1].y - pts[0].y)
+        return Group {
+            switch style {
+            case .blur:
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Rectangle().stroke(Color.white.opacity(0.35), lineWidth: 1.5))
+                    .frame(width: w, height: h)
+                    .position(x: x0 + w / 2, y: y0 + h / 2)
+            case .mosaic:
+                // 격자 느낌 — 핵심은 "가려졌다"는 인지
+                Canvas { ctx, size in
+                    let cell: CGFloat = max(6, min(w, h) / 12)
+                    var y: CGFloat = 0
+                    while y < size.height {
+                        var x: CGFloat = 0
+                        while x < size.width {
+                            let shade = ((Int(x / cell) + Int(y / cell)) % 2 == 0) ? 0.55 : 0.35
+                            ctx.fill(Path(CGRect(x: x, y: y, width: cell, height: cell)),
+                                     with: .color(.gray.opacity(shade)))
+                            x += cell
+                        }
+                        y += cell
+                    }
+                }
+                .frame(width: w, height: h)
+                .overlay(Rectangle().stroke(Color.white.opacity(0.35), lineWidth: 1.5))
+                .position(x: x0 + w / 2, y: y0 + h / 2)
             }
         }
     }
@@ -218,6 +266,10 @@ struct TranslationEditorView: View {
                         pathOf([pts[1]] + arrowHead(from: pts[0], to: pts[1], len: 14)).stroke(Color.red.opacity(0.8), lineWidth: 2.5)
                     }
                 }
+            case .blur:
+                if pts.count >= 2 { redactPreview(pts, style: .blur).opacity(0.7) }
+            case .mosaic:
+                if pts.count >= 2 { redactPreview(pts, style: .mosaic).opacity(0.7) }
             default: EmptyView()
             }
         }.allowsHitTesting(false)
@@ -248,7 +300,7 @@ struct TranslationEditorView: View {
                 switch tool {
                 case .pen:
                     if draft == nil { draft = [p] } else { draft?.append(p) }
-                case .arrow, .rect:
+                case .arrow, .rect, .blur, .mosaic:
                     if draft == nil { draft = [p, p] } else if draft!.count >= 2 { draft?[1] = p }
                 case .text:
                     break
@@ -262,9 +314,15 @@ struct TranslationEditorView: View {
                 case .pen:
                     if var d = draft, d.count >= 2 { d.append(p); annotations.append(Annotation(kind: .pen, points: d)) }
                     draft = nil
-                case .arrow, .rect:
+                case .arrow, .rect, .blur, .mosaic:
                     if let d = draft, d.count >= 2 {
-                        let kind: AnnotKind = (tool == .arrow) ? .arrow : .rect
+                        let kind: AnnotKind
+                        switch tool {
+                        case .arrow: kind = .arrow
+                        case .blur: kind = .blur
+                        case .mosaic: kind = .mosaic
+                        default: kind = .rect
+                        }
                         if hypot(d[1].x - d[0].x, d[1].y - d[0].y) > 0.005 {
                             annotations.append(Annotation(kind: kind, points: [d[0], p]))
                         }
@@ -495,9 +553,57 @@ struct TranslationEditorView: View {
                     NSColor.systemRed.setFill(); bg.fill()
                     (a.text as NSString).draw(at: NSPoint(x: p.x + 8, y: p.y - ts.height - 2), withAttributes: attrs)
                 }
+            case .blur, .mosaic:
+                if pts.count >= 2 {
+                    let r = NSRect(x: min(pts[0].x, pts[1].x), y: min(pts[0].y, pts[1].y),
+                                   width: abs(pts[1].x - pts[0].x), height: abs(pts[1].y - pts[0].y))
+                    if r.width > 2, r.height > 2,
+                       let redacted = Self.redact(region: r, in: img, style: a.kind == .blur ? .blur : .mosaic) {
+                        redacted.draw(in: r)
+                        red.setStroke()
+                        let bp = NSBezierPath(rect: r); bp.lineWidth = 1; bp.stroke()
+                    }
+                }
             }
         }
         out.unlockFocus()
         return out
+    }
+
+    /// B2: 영역 블러/모자이크 합성 (CoreImage) — 복사·핀 시 사용
+    private static func redact(region: NSRect, in img: NSImage, style: RedactStyle) -> NSImage? {
+        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let scale = CGFloat(cg.width) / max(img.size.width, 1)
+        var px = CGRect(x: region.minX * scale, y: region.minY * scale,
+                        width: region.width * scale, height: region.height * scale)
+        px = px.intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        guard px.width > 2, px.height > 2, let crop = cg.cropping(to: px.integral) else { return nil }
+        let ci = CIImage(cgImage: crop)
+        let context = CIContext(options: [.useSoftwareRenderer: false])
+        let outCG: CGImage?
+        switch style {
+        case .blur:
+            let radius = max(6, min(px.width, px.height) * 0.08)
+            let f = CIFilter(name: "CIGaussianBlur")
+            f?.setValue(ci, forKey: kCIInputImageKey)
+            f?.setValue(radius, forKey: kCIInputRadiusKey)
+            // 블러 확장 후 중앙 크롭
+            let expanded = ci.transformed(by: CGAffineTransform(translationX: -radius * 2, y: -radius * 2)
+                .scaledBy(x: 1, y: 1))
+            _ = expanded
+            if let o = f?.outputImage?.cropped(to: ci.extent) {
+                outCG = context.createCGImage(o, from: ci.extent)
+            } else { outCG = nil }
+        case .mosaic:
+            let block = max(4, Int(min(px.width, px.height) / 18))
+            let f = CIFilter(name: "CIPixellate")
+            f?.setValue(ci, forKey: kCIInputImageKey)
+            f?.setValue(Float(block), forKey: kCIInputScaleKey)
+            if let o = f?.outputImage {
+                outCG = context.createCGImage(o, from: ci.extent)
+            } else { outCG = nil }
+        }
+        guard let outCG else { return nil }
+        return NSImage(cgImage: outCG, size: region.size)
     }
 }
