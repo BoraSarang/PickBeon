@@ -35,10 +35,10 @@
 - [ ] pickbeon-gjr 테스트 타깃 신설 + smoke 시나리오 자동화
 - [ ] pickbeon-4xv GIF 해상도(800px 고정) 재검토
 - [ ] pickbeon-9y6 멀티디스플레이 좌표계 검증
-- [ ] pickbeon-dt7 macOS 최소 버전 결정 (15 유지 vs 26 상향)
+- [x] pickbeon-dt7 macOS 최소 버전 26 로 상향 (2026-09-27 사용자 결정)
 
 ## P2 보류
-- [ ] pickbeon-087 단축키 커스텀
+- [x] pickbeon-087 단축키 커스텀 (2026-09-28 완료)
 - [ ] pickbeon-e2n Dark/Tinted 아이콘
 - [ ] pickbeon-bwm E2E
 - [ ] pickbeon-w3f BYOK (외부 번역키)
