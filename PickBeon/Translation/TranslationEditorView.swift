@@ -79,6 +79,14 @@ struct TranslationEditorView: View {
             IconToolButton(systemName: "arrow.uturn.backward", tip: String(localized: "실행 취소"), enabled: !annotations.isEmpty) { _ = annotations.popLast() }
             IconToolButton(systemName: "trash", tip: String(localized: "주석 지우기"), enabled: !annotations.isEmpty) { annotations.removeAll() }
             Spacer()
+            // [P0-2] 복사가 무엇을 담았는지 명시 (텍스트만인지, 주석 포함 합성인지)
+            if let toast = coordinator.copyToast {
+                Text(toast)
+                    .font(Theme.font(11, weight: .semibold))
+                    .foregroundStyle(Theme.ok)
+                    .fixedSize()
+                    .transition(.opacity)
+            }
             Button {
                 copyAll()
             } label: {
@@ -105,6 +113,7 @@ struct TranslationEditorView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(Theme.surface)
+        .animation(Theme.hoverFade, value: coordinator.copyToast)
     }
 
     private func toggleTool(_ t: AnnotTool) {
@@ -503,12 +512,12 @@ struct TranslationEditorView: View {
     }
 
     private func copyAll() {
+        // [P0-2] 과거엔 setString(번역문) 뒤에 writeObjects(합성이미지)를 불러 텍스트가 소실됐다.
+        // 주석이 없으면 원본 이미지, 있으면 합성 이미지가 번역문과 함께 한 NSPasteboardItem 에 실린다.
         let text = translator.result.isEmpty ? coordinator.latestTranslated : translator.result
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        if !annotations.isEmpty, let img = image {
-            NSPasteboard.general.writeObjects([renderAnnotated(img)])
-        }
+        let composite = annotations.isEmpty ? image : image.map { renderAnnotated($0) }
+        let ok = PasteboardService.write(text: text, image: composite)
+        coordinator.notifyCopy(ok: ok, extra: annotations.isEmpty ? nil : String(localized: "주석 포함"))
     }
 
     private func pinCurrent() {

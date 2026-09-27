@@ -26,6 +26,8 @@ final class AppCoordinator: ObservableObject {
     @Published var cardTitle = ""
     @Published var cardBody = ""
     @Published var cardPinned = false
+    /// 복사 결과 토스트 (에디터·카드가 공유). "무엇이 복사됐는지"를 사용자에게 명시한다.
+    @Published var copyToast: String?
 
     let capture = ScreenCaptureManager()
     let ocr = OCRService()
@@ -371,8 +373,7 @@ final class AppCoordinator: ObservableObject {
     func applyAction(_ action: CaptureAction, image: NSImage) async {
         switch action {
         case .copy:
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([image])
+            PasteboardService.write(image: image)
             cardMode = .message
             cardTitle = String(localized: "이미지 복사됨")
             cardBody = String(localized: "⌘V 로 붙여넣기")
@@ -417,8 +418,7 @@ final class AppCoordinator: ObservableObject {
                     return
                 }
                 latestText = text
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                PasteboardService.write(text: text)
                 if let ctx = modelContext {
                     clipboard.add(text: text, translated: "", context: ctx)
                 }
@@ -731,13 +731,10 @@ final class AppCoordinator: ObservableObject {
                 FileLog.log("GIF 저장 실패 \(error)")
             }
             if AppSettings.shared.gifAutoCopy {
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.declareTypes([.fileURL, NSPasteboard.PasteboardType("com.compuserve.gif")], owner: nil)
-                pb.setData(r.data, forType: NSPasteboard.PasteboardType("com.compuserve.gif"))
-                if let item = savedPath.isEmpty ? nil : URL(fileURLWithPath: savedPath) as NSURL? {
-                    pb.writeObjects([item])
-                }
+                // [P0-2] 과거엔 declareTypes+setData(GIF) 뒤에 writeObjects(파일URL)를 불러
+                // GIF 바이트가 소실됐다(카드에는 "GIF 복사됨 · ⌘V" 라고 표시되고 있었음).
+                // 파일 URL 과 GIF 데이터는 같은 item 의 서로 다른 타입으로 함께 실린다.
+                PasteboardService.write(gifData: r.data, fileURL: savedPath.isEmpty ? nil : URL(fileURLWithPath: savedPath))
             }
             let fps = AppSettings.shared.gifFps
             let playSec = Double(r.frames) / Double(max(fps, 1))
@@ -876,8 +873,7 @@ final class AppCoordinator: ObservableObject {
             let out = try await translator.translate(joined, polite: AppSettings.shared.politeTone)
             FileLog.log("번역 완료")
             latestTranslated = out
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(out, forType: .string)
+            PasteboardService.write(text: out)
             if let ctx = modelContext {
                 clipboard.add(text: joined, translated: out, context: ctx)
             }
@@ -1068,6 +1064,23 @@ final class AppCoordinator: ObservableObject {
         w.makeKeyAndOrderFront(nil)
     }
 
+    // MARK: - 복사 피드백 (P0-2: 무엇이 클립보드에 들어갔는지 사용자에게 명시)
+
+    /// - Parameter extra: 부가 설명 (예: "주석 포함")
+    func notifyCopy(ok: Bool, extra: String? = nil) {
+        let message: String
+        if ok {
+            message = extra.map { "\(String(localized: "복사됨")) · \($0)" } ?? String(localized: "복사됨")
+        } else {
+            message = String(localized: "복사할 내용이 없습니다")
+        }
+        copyToast = message
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            if self.copyToast == message { self.copyToast = nil }
+        }
+    }
+
     // MARK: - 텍스트 선택 번역 (AX + Safari용 Cmd+C 폴백)
     func translateSelection() {
         guard permissions.axOK else { showOnboarding(); return }
@@ -1087,8 +1100,7 @@ final class AppCoordinator: ObservableObject {
             do {
                 let out = try await translator.translate(sel, polite: AppSettings.shared.politeTone)
                 latestText = sel; latestTranslated = out
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(out, forType: .string)
+                PasteboardService.write(text: out)
                 if let ctx = modelContext { clipboard.add(text: sel, translated: out, context: ctx) }
                 routeAfterCapture(nearMouse: mouse)
             } catch {
@@ -1118,7 +1130,11 @@ final class AppCoordinator: ObservableObject {
     // MARK: - 히스토리 (커맨드 팔레트: 화면 중앙 nonactivating 패널)
     func showHistory() {
         if historyWindow != nil { historyWindow?.makeKeyAndOrderFront(nil); return }
-        let v = ClipboardPopupView(store: clipboard)
+        // onDismiss 로 close() 를 호출해야 WindowDropper 콜백이 돌아 historyWindow 가 정리된다.
+        // (과거 orderOut 은 willClose 가 울리지 않아 재오픈 시 검색어/포커스가 리셋되지 않았다)
+        let v = ClipboardPopupView(store: clipboard, onDismiss: { [weak self] in
+            self?.historyWindow?.close()
+        })
         let panel = KeyableResultPanel(contentViewController: NSHostingController(rootView: v))
         panel.styleMask = [.nonactivatingPanel, .titled, .fullSizeContentView, .closable]
         panel.title = ""

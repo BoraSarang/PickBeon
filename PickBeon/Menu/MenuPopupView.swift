@@ -174,9 +174,7 @@ struct MenuPopupView: View {
     private func copyLatest() {
         let text = coordinator.latestTranslated
         guard !text.isEmpty else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
+        guard PasteboardService.write(text: text) else { return }
         justCopied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { justCopied = false }
     }

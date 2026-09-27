@@ -25,6 +25,20 @@ struct ResultCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.rPanel))
         .overlay(RoundedRectangle(cornerRadius: Theme.rPanel).stroke(Theme.line, lineWidth: 1))
         .padding(8)
+        .overlay(alignment: .bottom) {
+            // [P0-2] 복사 결과 안내 (3초 자동숨김과 무관하게 토스트만 잠깐)
+            if let toast = coordinator.copyToast {
+                Text(toast)
+                    .font(Theme.font(10.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Theme.ok))
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+            }
+        }
+        .animation(Theme.hoverFade, value: coordinator.copyToast)
         .overlay(alignment: .topTrailing) {
             if hovering || coordinator.cardMode == .error {
                 closeButton
@@ -247,10 +261,7 @@ struct ImageTransferable: Transferable {
     let image: NSImage
     static var transferRepresentation: some TransferRepresentation {
         DataRepresentation(exportedContentType: .png) { item in
-            guard let tiff = item.image.tiffRepresentation,
-                  let rep = NSBitmapImageRep(data: tiff),
-                  let png = rep.representation(using: .png, properties: [:]) else { return Data() }
-            return png
+            PasteboardService.pngData(of: item.image) ?? Data()
         }
         DataRepresentation(importedContentType: .png) { data in
             ImageTransferable(image: NSImage(data: data) ?? NSImage())

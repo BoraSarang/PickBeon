@@ -21,7 +21,7 @@ final class HistoryRecord {
 final class ClipboardStore: ObservableObject {
     @Published var items: [HistoryRecord] = []
     private var timer: Timer?
-    private var lastChange = NSPasteboard.general.changeCount
+    private var lastChange = PasteboardService.changeCount
     private var storedContext: ModelContext?
 
     func startPolling(context: ModelContext) {
@@ -55,20 +55,19 @@ final class ClipboardStore: ObservableObject {
     }
 
     func poll(context: ModelContext) {
-        let pb = NSPasteboard.general
-        guard pb.changeCount != lastChange else { return }
-        lastChange = pb.changeCount
-        if let s = pb.string(forType: .string), !s.isEmpty {
+        guard PasteboardService.changeCount != lastChange else { return }
+        lastChange = PasteboardService.changeCount
+        if let s = PasteboardService.string, !s.isEmpty {
             add(text: s, context: context)
-        } else if let data = pb.data(forType: .png), AppSettings.shared.saveImages {
+        } else if let data = PasteboardService.data(.png), AppSettings.shared.saveImages {
             add(text: String(localized: "이미지"), isImage: true, png: data, context: context)
         }
     }
 
     func add(text: String, translated: String = "", isImage: Bool = false, png: Data? = nil, context: ModelContext) {
         // 동일 내용 선두 중복 스킵
-        if let first = items.first, first.text == text, first.translated == translated { 
-            lastChange = NSPasteboard.general.changeCount
+        if let first = items.first, first.text == text, first.translated == translated {
+            lastChange = PasteboardService.changeCount
             return
         }
         let r = HistoryRecord(text: text, translated: translated, isImage: isImage, png: png)
@@ -76,7 +75,7 @@ final class ClipboardStore: ObservableObject {
         items.insert(r, at: 0)
         enforceLimit(context: context)
         // 자기복사 중복 방지: 우리 복사로 바뀐 페이스트보드를 폴링이 다시 add하지 않도록 동기화
-        lastChange = NSPasteboard.general.changeCount
+        lastChange = PasteboardService.changeCount
         DebugLogger.shared.cache("히스토리 추가 \(items.count)개")
     }
 

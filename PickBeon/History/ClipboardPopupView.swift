@@ -21,6 +21,8 @@ struct ClipboardPopupView: View {
     @State private var selectedIndex: Int = 0
     @FocusState private var searchFocused: Bool
     var onPaste: ((HistoryRecord) -> Void)?
+    /// 창 닫기. orderOut 이 아니라 close 로 끝내야 WindowDropper 수명주기 콜백이 돌아간다.
+    var onDismiss: () -> Void = {}
 
     private var previewRecord: HistoryRecord? {
         if let id = pinnedID, let r = store.items.first(where: { $0.id == id }) { return r }
@@ -53,10 +55,18 @@ struct ClipboardPopupView: View {
         .frame(width: 610, height: 480)
         .background(Theme.bg)
         .animation(Theme.hoverFade, value: previewRecord?.id)
-        .onAppear { searchFocused = true }
-        .onExitCommand { NSApp.keyWindow?.orderOut(nil) }
+        .onAppear {
+            searchFocused = true
+            pinnedID = nil
+            selectedIndex = 0
+        }
+        .onExitCommand { onDismiss() }
         .background(
-            KeyObserver(query: $query, count: filtered.count, selectedIndex: $selectedIndex, pinnedID: $pinnedID) { idx in
+            KeyObserver(
+                query: $query, count: filtered.count,
+                selectedIndex: $selectedIndex, pinnedID: $pinnedID,
+                onDismiss: onDismiss
+            ) { idx in
                 paste(at: idx)
             }
             .frame(width: 0, height: 0)
@@ -270,19 +280,15 @@ struct ClipboardPopupView: View {
     }
 
     private func pasteItem(_ r: HistoryRecord) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        if !r.translated.isEmpty { pb.setString(r.translated, forType: .string) }
-        else if !r.text.isEmpty { pb.setString(r.text, forType: .string) }
-        if r.isImage, let data = r.pngData { pb.setData(data, forType: .png) }
+        // 번역문(있으면 번역 우선) + 이미지를 한 item 에 함께 실어 기존 paste 도 동작을 보존.
+        let text = r.translated.isEmpty ? r.text : r.translated
+        PasteboardService.write(text: text, imagePNG: r.isImage ? r.pngData : nil)
         onPaste?(r)
-        NSApp.keyWindow?.orderOut(nil)
+        onDismiss()
     }
 
     private func copyItem(_ r: HistoryRecord) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(r.translated.isEmpty ? r.text : r.translated, forType: .string)
+        PasteboardService.write(text: r.translated.isEmpty ? r.text : r.translated)
     }
 
     private func togglePin(_ r: HistoryRecord) {
@@ -377,6 +383,7 @@ private struct KeyObserver: NSViewRepresentable {
     let count: Int
     @Binding var selectedIndex: Int
     @Binding var pinnedID: UUID?
+    var onDismiss: () -> Void = {}
     let onPaste: (Int) -> Void
 
     func makeNSView(context: Context) -> MonitorView {
@@ -385,7 +392,7 @@ private struct KeyObserver: NSViewRepresentable {
             onEnter: { onPaste(selectedIndex) },
             onEscape: {
                 pinnedID = nil
-                NSApp.keyWindow?.orderOut(nil)
+                onDismiss()
             },
             onArrow: { up in
                 if up { selectedIndex = max(0, selectedIndex - 1) }
@@ -398,7 +405,7 @@ private struct KeyObserver: NSViewRepresentable {
         nsView.onEnter = { onPaste(selectedIndex) }
         nsView.onEscape = {
             pinnedID = nil
-            NSApp.keyWindow?.orderOut(nil)
+            onDismiss()
         }
         nsView.onArrow = { up in
             if up { selectedIndex = max(0, selectedIndex - 1) }

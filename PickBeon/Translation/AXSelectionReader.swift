@@ -4,6 +4,8 @@ import Carbon.HIToolbox
 
 // Bob 방식: 선택 후 단축키로 AXSelectedText 읽기. OCR 불필요.
 // Safari 등 AX 미지원 앱 대비: 잠깐 시뮬 Cmd+C로 클립보드 읽은 뒤 원래대로 복원.
+// 전부 MainActor — 클립보드 접근은 PasteboardService 를 경유한다.
+@MainActor
 enum AXSelectionReader {
     static func readSelectedText() -> String? {
         let sys = AXUIElementCreateSystemWide()
@@ -22,7 +24,7 @@ enum AXSelectionReader {
         let saved = savePasteboard()
         postCommandC()
         try? await Task.sleep(nanoseconds: 180_000_000)
-        let clip = NSPasteboard.general.string(forType: .string)
+        let clip = PasteboardService.string
         restorePasteboard(saved)
         if let s = clip, !s.isEmpty {
             FileLog.log("폴백 성공 \(s.prefix(30))")
@@ -46,37 +48,18 @@ enum AXSelectionReader {
     }
 
     // MARK: - 클립보드 보존 (폴백이 사용자 클립보드를 먹지 않도록)
-    private struct SavedItem {
-        let strings: [String: String]   // type -> content
-        let datas: [String: Data]
-    }
-    private static let snapTypes: [NSPasteboard.PasteboardType] = [
-        .string, .png, .tiff, .rtf, .rtfd, .URL, .fileURL,
-    ]
-
-    private static func savePasteboard() -> [SavedItem] {
-        let pb = NSPasteboard.general
-        guard let items = pb.pasteboardItems else { return [] }
-        return items.map { item in
-            var strings: [String: String] = [:]
-            var datas: [String: Data] = [:]
-            for t in snapTypes {
-                if let s = item.string(forType: t) { strings[t.rawValue] = s }
-                else if let d = item.data(forType: t) { datas[t.rawValue] = d }
-            }
-            return SavedItem(strings: strings, datas: datas)
-        }
+    // 스냅샷/복원도 PasteboardService 를 거쳐 클립보드 접근 단일점을 유지한다.
+    private static func savePasteboard() -> [PasteboardService.Snapshot] {
+        PasteboardService.snapshot(types: [.string, .png, .tiff, .rtf, .rtfd, .URL, .fileURL])
     }
 
-    private static func restorePasteboard(_ saved: [SavedItem]) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
+    private static func restorePasteboard(_ saved: [PasteboardService.Snapshot]) {
         let items = saved.map { s -> NSPasteboardItem in
             let it = NSPasteboardItem()
             for (t, v) in s.strings { it.setString(v, forType: NSPasteboard.PasteboardType(t)) }
             for (t, d) in s.datas { it.setData(d, forType: NSPasteboard.PasteboardType(t)) }
             return it
         }
-        if !items.isEmpty { pb.writeObjects(items) }
+        _ = PasteboardService.writeItems(items)
     }
 }
