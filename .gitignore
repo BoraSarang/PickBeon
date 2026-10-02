@@ -8,3 +8,5 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+# 에이전트 세션 로그 — 로컬 전용 (커밋 금지)
+.agent/
